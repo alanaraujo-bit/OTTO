@@ -46,6 +46,22 @@ elas definem o padrão visual de todo o resto.
 9. `interpolateColor` do `Field` lia `err` dentro do array de saída, produzindo salto de cor no meio
    da transição; e a opacidade somava acima de 1. Ambos corrigidos.
 
+### Defeito encontrado no aparelho real (invisível na web)
+10. **`Unmatched Route` ao abrir pelo Expo Go.** O sintoma parecia roteamento, mas a causa era ABI de
+    TurboModule: o npm resolveu `react-native-worklets` para 0.8.3 — o peer do Reanimated é apenas
+    `>=0.5.0` — enquanto o Expo Go SDK 54 embute o binário **0.5.1**. O JS chamava
+    `installTurboModule(arg)` e o nativo esperava `installTurboModule()`. A exceção derrubava a
+    inicialização do Reanimated, que derrubava o carregamento das rotas do expo-router. Daí o
+    "Unmatched Route": a rota certa nunca chegou a ser registrada.
+
+    Corrigido pinando todos os módulos nativos exatamente às versões que o Expo Go embute, com
+    `overrides` para o worklets, que resolve de forma transitiva. Verificado no bundle Android real
+    que o aparelho baixa: agora emite `installTurboModule()` com zero argumentos.
+
+    **Lacuna de processo que isso expôs:** a verificação era só web, e web não carrega módulo nativo,
+    então essa classe inteira de erro era invisível. Agora existe `tools/native-check.mjs`, que
+    compara cada módulo nativo instalado com `expo/bundledNativeModules.json` e falha se divergir.
+
 ---
 
 ## Próximo passo
