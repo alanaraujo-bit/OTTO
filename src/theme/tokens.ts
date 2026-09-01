@@ -22,10 +22,18 @@ export const color = {
   onInk: '#08090B',
 } as const;
 
-/** Low-alpha luminance that wraps onto the curved panel edge. Never carries content. */
+/**
+ * Low-alpha luminance that wraps onto the curved panel edge. Never carries content.
+ *
+ * Colour and opacity are separate on purpose: react-native-svg drops the alpha channel of an
+ * `rgba()` string passed to `stopColor` on Android, painting the stop fully opaque. A browser
+ * parses it correctly, so the bug is invisible on web and washes out the whole screen on device.
+ * Opacity belongs in `stopOpacity`.
+ */
 export const rim = {
-  inner: 'rgba(242,244,247,0.055)',
-  outer: 'rgba(242,244,247,0)',
+  color: '#F2F4F7',
+  innerOpacity: 0.055,
+  outerOpacity: 0,
 } as const;
 
 /** 4dp base. `gutter` is the curve-safe horizontal margin, not a taste choice. */

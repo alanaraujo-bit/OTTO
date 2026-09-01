@@ -66,8 +66,8 @@ function RimLight() {
         <Svg width={size.w} height={size.h}>
           <Defs>
             <RadialGradient id="ottoRim" cx="50%" cy="0%" r="88%">
-              <Stop offset="0" stopColor={rim.inner} />
-              <Stop offset="1" stopColor={rim.outer} />
+              <Stop offset="0" stopColor={rim.color} stopOpacity={rim.innerOpacity} />
+              <Stop offset="1" stopColor={rim.color} stopOpacity={rim.outerOpacity} />
             </RadialGradient>
           </Defs>
           <Rect x={0} y={0} width={size.w} height={size.h} fill="url(#ottoRim)" />

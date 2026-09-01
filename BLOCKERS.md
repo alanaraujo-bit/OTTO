@@ -44,3 +44,12 @@ silent_install.bat
 tokens, same layout logic) plus the real handset over Expo Go. Native-only truth — 120Hz frame
 pacing, haptics, the actual curved-panel rim light, real font-scale behaviour — is verified on the
 handset, not in a browser.
+
+---
+
+## Nota sobre B4 — por que ele passou a ser prioritário
+Dois defeitos chegaram ao aparelho porque a verificação era só web, e web não carrega módulo nativo:
+o ABI do worklets (B-fix 10) e o alpha descartado no gradiente SVG (B-fix 11). Ambos passavam limpos
+em screenshot de navegador. Resolver o B4 (uma execução elevada, uma vez) habilita captura real via
+`adb exec-out screencap`, que fecha essa classe inteira de erro.
+Até lá, valem as guardas estáticas: `tools/native-check.mjs` e `tools/svg-guard.mjs`.
