@@ -36,13 +36,14 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-gesture-handler": "~2.28.0",
-    "react-native-reanimated": "~4.1.1",
-    "react-native-safe-area-context": "~5.6.0",
-    "react-native-screens": "~4.16.0",
+    "react-native-gesture-handler": "2.28.0",
+    "react-native-reanimated": "4.1.1",
+    "react-native-safe-area-context": "5.6.0",
+    "react-native-screens": "4.16.0",
     "react-native-svg": "15.12.1",
     "react-native-web": "^0.21.0",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.15",
+    "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
@@ -52,5 +53,8 @@
     "puppeteer-core": "^25.9.0",
     "qrcode": "^1.5.4",
     "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "react-native-worklets": "0.5.1"
   }
 }

@@ -59,6 +59,7 @@ node tools/shoot.mjs        # captura + medição de overflow
 node tools/states.mjs       # captura dos estados interativos
 node tools/measure.mjs      # ritmo vertical em dp
 node tools/contrast.mjs     # WCAG da paleta
+node tools/native-check.mjs # compatibilidade de módulos nativos com o Expo Go
 npx tsc --noEmit            # typecheck
 ```
 
