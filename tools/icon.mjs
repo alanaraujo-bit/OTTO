@@ -293,7 +293,13 @@ const open = (w) =>
  */
 const HERO = 1.17;
 const FG = 0.78;
-const SPLASH = 1.5;
+/**
+ * The Android 12+ splash masks the icon to a circle and treats the inner two thirds of the canvas as
+ * the safe area. The mark's furthest point is a brow cap at r=332 of 512, so anything above ~1.03
+ * puts a rounded cap outside that circle. 1.5 looked right in a rectangular frame and would have
+ * shipped with the bar clipped at both ends.
+ */
+const SPLASH = 1;
 
 /** ground + mark: the composed icon. */
 export function iconSVG(key, { w = S, scale = HERO, uid = key } = {}) {
@@ -411,12 +417,20 @@ if (invoked) {
     const tint = (bg, ink, label) =>
       `<div class="c"><div class="tile" style="background:${bg};clip-path:path('${squircle(150)}')">
          <div class="mono" style="background:${ink}"></div></div><div class="lb">${label}</div></div>`;
-    const crop = (mask, size) => {
+    /**
+     * The 108->72dp crop, applied to whichever layers are asked for. `only` exists because the
+     * themed monochrome icon goes through this same crop: sizing it with `mask-size:contain` instead
+     * shows the silhouette about a third smaller than the device will, and much further from the
+     * mask edge than it really sits.
+     */
+    const crop = (mask, size, only) => {
       const inner = size * (108 / 72);
       const off = (size - inner) / 2;
+      const layer = (f) =>
+        `<img src="../../assets/${f}.png" style="position:absolute;width:${inner}px;height:${inner}px;left:${off}px;top:${off}px">`;
+      const bg = only === 'android-icon-monochrome' ? '' : layer('android-icon-background');
       return `<div class="tile" style="width:${size}px;height:${size}px;${mask};overflow:hidden;position:relative">
-        <img src="../../assets/android-icon-background.png" style="position:absolute;width:${inner}px;height:${inner}px;left:${off}px;top:${off}px">
-        <img src="../../assets/android-icon-foreground.png" style="position:absolute;width:${inner}px;height:${inner}px;left:${off}px;top:${off}px">
+        ${bg}${layer(only ?? 'android-icon-foreground')}
       </div>`;
     };
     const html = `<!doctype html><meta charset="utf-8"><style>
@@ -458,9 +472,8 @@ if (invoked) {
     <div class="row">
       <!-- Also forces the decode. A mask-image is not network activity Chrome waits on, so with the
            asset referenced only from CSS every tinted tile screenshots empty. -->
-      <div class="c"><div class="tile" style="background:#101216;clip-path:path('${squircle(150)}')">
-        <img src="../../assets/android-icon-monochrome.png" style="width:100%;height:100%"></div>
-        <div class="lb">silhueta bruta</div></div>
+      <div class="c">${crop(`clip-path:path('${squircle(150)}')`, 150, 'android-icon-monochrome')}
+        <div class="lb">silhueta, recorte real</div></div>
       ${tint('#3A2E1F', '#E8C79A', 'tema quente')}
       ${tint('#1E2A3A', '#A8C8E8', 'tema frio')}
       ${tint('#E8E4DC', '#3A3630', 'tema claro')}
@@ -469,6 +482,9 @@ if (invoked) {
     <h3>splash &mdash; sobre #08090B, imageWidth 160</h3>
     <div class="row">
       <div class="phone"><img src="../../assets/splash-icon.png" style="width:160px"></div>
+      <div class="c"><div class="tile" style="width:150px;height:150px;background:#08090B;border-radius:50%">
+        <img src="../../assets/splash-icon.png" style="width:150px;height:150px"></div>
+        <div class="lb">mascara circular (Android 12+)</div></div>
       <div class="c"><img src="../../assets/favicon.png" style="width:48px;height:48px"><div class="lb">favicon 48</div></div>
       <div class="c"><img src="../../assets/favicon.png" style="width:32px;height:32px"><div class="lb">32</div></div>
       <div class="c"><img src="../../assets/favicon.png" style="width:16px;height:16px"><div class="lb">16</div></div>
