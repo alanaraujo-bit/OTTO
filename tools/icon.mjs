@@ -19,7 +19,8 @@
  *   node tools/icon.mjs ship <variant>    # overwrite assets/ with the chosen variant
  */
 import puppeteer from 'puppeteer-core';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
@@ -43,15 +44,15 @@ const SAFE_R = (S * (66 / 108)) / 2;
  */
 const G = {
   cx: 512,
-  dx: 160,
+  dx: 156,
   cy: 532,
-  rc: 110,
-  sw: 44,
-  lens: 92,
-  pupil: 40,
+  rc: 112,
+  sw: 46,
+  lens: 94,
+  pupil: 42,
   pupilDy: -6,
   browY: 352,
-  browHw: 277,
+  browHw: 276,
   browSw: 30,
 };
 
@@ -67,14 +68,17 @@ const TREATMENTS = {
   /** The instrument. Black machined slab, bezelled eyes over dark glass, warm light from above. */
   machined: {
     label: 'Machined',
+    recess: { color: '#000000', o: 0.5 },
+    bead: 0.5,
+    grain: 0.075,
     ground: [['#1B1E25', 0], ['#0F1217', 0.46], ['#06070A', 1]],
     glow: { color: '#FFEFD8', inner: 0.2, mid: 0.05, cx: 512, cy: 130, r: 760 },
     vignette: 0.42,
     body: [['#FFFFFF', 0], ['#E4E8EE', 0.5], ['#9FA6B1', 1]],
     lipOut: [['#FFFFFF', 0.95, 0], ['#FFFFFF', 0.12, 0.38], ['#FFFFFF', 0, 0.58], ['#000000', 0.3, 0.9], ['#000000', 0.5, 1]],
     lipIn: [['#000000', 0.55, 0], ['#000000', 0.06, 0.44], ['#FFFFFF', 0, 0.62], ['#FFFFFF', 0.14, 0.86], ['#FFFFFF', 0.26, 1]],
-    lens: [['#20242C', 0], ['#0B0D12', 1]],
-    sheen: 0.13,
+    lens: [['#333A46', 0], ['#0D1015', 0.72], ['#161A21', 1]],
+    sheen: 0.2,
     pupil: [['#FFFFFF', 0], ['#D3D9E1', 0.55], ['#A7AEB9', 1]],
     glint: null,
     shadow: { dy: 16, blur: 18, color: '#000000', o: 0.62 },
@@ -84,6 +88,9 @@ const TREATMENTS = {
   /** Inverted. Warm bone slab, the face cut into it in graphite. The only light-ground candidate. */
   bone: {
     label: 'Bone',
+    recess: { color: '#6B5F49', o: 0.42 },
+    bead: 0.3,
+    grain: 0.05,
     ground: [['#FBF8F1', 0], ['#F0EBE0', 0.5], ['#DED7C8', 1]],
     glow: { color: '#FFFFFF', inner: 0.55, mid: 0.14, cx: 512, cy: 130, r: 780 },
     vignette: 0.1,
@@ -101,6 +108,9 @@ const TREATMENTS = {
   /** The signal. Near-black, no glass, the mark emitting. Built to survive 48dp on any wallpaper. */
   beacon: {
     label: 'Beacon',
+    recess: null,
+    bead: 0,
+    grain: 0.07,
     ground: [['#14171D', 0], ['#0A0C10', 0.55], ['#050608', 1]],
     glow: { color: '#FFF6E8', inner: 0.13, mid: 0.035, cx: 512, cy: 520, r: 560 },
     vignette: 0.5,
@@ -122,6 +132,9 @@ const TREATMENTS = {
    */
   ember: {
     label: 'Ember',
+    recess: { color: '#4A1204', o: 0.5 },
+    bead: 0.35,
+    grain: 0.06,
     ground: [['#F0722A', 0], ['#D64A16', 0.52], ['#8E2A0C', 1]],
     glow: { color: '#FFD9A8', inner: 0.4, mid: 0.1, cx: 512, cy: 140, r: 780 },
     vignette: 0.28,
@@ -179,6 +192,17 @@ function defs(p, t, g) {
     <filter id="${p}-soft" x="-60%" y="-60%" width="220%" height="220%">
       <feGaussianBlur stdDeviation="16"/>
     </filter>
+    <filter id="${p}-inner" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="${g.lens ? g.lens * 0.11 : 10}"/>
+    </filter>
+    <filter id="${p}-bead" x="-90%" y="-90%" width="280%" height="280%">
+      <feGaussianBlur stdDeviation="${g.pupil * 0.16}"/>
+    </filter>
+    <filter id="${p}-grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="3" stitchTiles="stitch" result="n"/>
+      <feColorMatrix in="n" type="matrix"
+        values="0 0 0 0 0.62  0 0 0 0 0.62  0 0 0 0 0.64  0.4 0.4 0.4 0 -0.16"/>
+    </filter>
     <filter id="${p}-cast" x="-25%" y="-25%" width="150%" height="150%">
       <feDropShadow dx="0" dy="${sh.dy}" stdDeviation="${sh.blur}" flood-color="${sh.color}" flood-opacity="${sh.o}"/>
     </filter>
@@ -193,7 +217,14 @@ function defs(p, t, g) {
   </defs>`;
 }
 
-/** One eye, drawn at the origin: glass, then the bezel over the glass rim, then the pupil. */
+/**
+ * One eye at the origin: glass, the recess that proves the glass is set below the rim, the bezel,
+ * then the pupil sitting on its own contact shadow.
+ *
+ * The recess is a fat blurred stroke on the lens circle, nudged down and clipped to the lens — so it
+ * banks up under the top of the rim and thins out at the bottom, which is what an inner shadow in a
+ * bore actually does. Without it the bezel reads as painted on rather than as machined into.
+ */
 const eye = (p, t, g, flat) => {
   const lipW = Math.max(5, g.sw * 0.16);
   if (flat)
@@ -205,12 +236,14 @@ const eye = (p, t, g, flat) => {
         ? `<g clip-path="url(#${p}-lensclip)">
              <circle r="${g.lens}" fill="url(#${p}-lens)"/>
              ${t.sheen ? `<ellipse cx="-22" cy="-36" rx="60" ry="30" fill="#fff" opacity="${t.sheen}" transform="rotate(-26 -22 -36)" filter="url(#${p}-soft)"/>` : ''}
+             ${t.recess ? `<circle cy="${g.lens * 0.13}" r="${g.lens}" fill="none" stroke="${t.recess.color}" stroke-width="${g.lens * 0.4}" opacity="${t.recess.o}" filter="url(#${p}-inner)"/>` : ''}
            </g>`
         : ''
     }
     <circle r="${g.rc}" fill="none" stroke="url(#${p}-body)" stroke-width="${g.sw}"/>
     <circle r="${g.rc + g.sw / 2 - lipW / 2}" fill="none" stroke="url(#${p}-lipO)" stroke-width="${lipW}"/>
     <circle r="${g.rc - g.sw / 2 + lipW / 2}" fill="none" stroke="url(#${p}-lipI)" stroke-width="${lipW}"/>
+    ${t.bead ? `<circle cy="${g.pupilDy + g.pupil * 0.16}" r="${g.pupil}" fill="#000" opacity="${t.bead}" filter="url(#${p}-bead)"/>` : ''}
     <circle cy="${g.pupilDy}" r="${g.pupil}" fill="url(#${p}-pupil)"/>
     ${t.glint ? `<circle cx="${-g.pupil * 0.33}" cy="${g.pupilDy - g.pupil * 0.36}" r="${g.pupil * 0.22}" fill="#fff" opacity="${t.glint}"/>` : ''}`;
 };
@@ -269,6 +302,9 @@ export function iconSVG(key, { w = S, scale = HERO, uid = key } = {}) {
     <rect width="${S}" height="${S}" fill="url(#${uid}-ground)"/>
     ${t.glow ? `<rect width="${S}" height="${S}" fill="url(#${uid}-glow)"/>` : ''}
     <rect width="${S}" height="${S}" fill="url(#${uid}-vig)"/>
+    ${t.grain ? `<rect width="${S}" height="${S}" filter="url(#${uid}-grain)" opacity="${t.grain}"/>` : ''}
+    <rect width="${S}" height="${S}" fill="url(#${uid}-vig)"/>
+    ${t.grain ? `<rect width="${S}" height="${S}" filter="url(#${uid}-grain)" opacity="${t.grain}"/>` : ''}
     ${markGroup(uid, t, G, { scale })}
   </svg>`;
 }
@@ -286,6 +322,9 @@ export function groundSVG(key, { w = S, uid = `${key}b` } = {}) {
     <rect width="${S}" height="${S}" fill="url(#${uid}-ground)"/>
     ${t.glow ? `<rect width="${S}" height="${S}" fill="url(#${uid}-glow)"/>` : ''}
     <rect width="${S}" height="${S}" fill="url(#${uid}-vig)"/>
+    ${t.grain ? `<rect width="${S}" height="${S}" filter="url(#${uid}-grain)" opacity="${t.grain}"/>` : ''}
+    <rect width="${S}" height="${S}" fill="url(#${uid}-vig)"/>
+    ${t.grain ? `<rect width="${S}" height="${S}" filter="url(#${uid}-grain)" opacity="${t.grain}"/>` : ''}
   </svg>`;
 }
 
@@ -328,27 +367,120 @@ export { TREATMENTS, S, VISIBLE, SAFE_R, squircle, shoot, doc, CHROME, G };
 
 // -- entry -----------------------------------------------------------------------------------------
 
-const invoked = process.argv[1] && import.meta.url.includes('icon.mjs');
+/**
+ * Only when run as the entry point. Importing this module must render nothing — a substring test on
+ * the URL fires for the importer too, which quietly re-ran the whole sheet build on every import.
+ */
+const invoked = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (invoked) {
   const [cmd, arg] = process.argv.slice(2);
   const browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: 'new',
-    args: ['--no-sandbox', '--force-color-profile=srgb', '--hide-scrollbars'],
+    // --allow-file-access-from-files is what verify needs: Chrome will load an <img> from file://
+    // but silently refuses a CSS url(), so the monochrome tint tiles mask to nothing without it.
+    args: [
+      '--no-sandbox',
+      '--force-color-profile=srgb',
+      '--hide-scrollbars',
+      '--allow-file-access-from-files',
+    ],
   });
 
   if (cmd === 'ship') {
     const key = arg;
     if (!TREATMENTS[key]) throw new Error(`unknown variant: ${key}`);
     await mkdir('assets', { recursive: true });
+    // The grain is not decoration — without it the slab renders as flat digital black and the
+    // gradient steps. It is also incompressible, and costs ~750KB at 1024. So the ground is only
+    // paid for at full resolution where it is actually seen large; the adaptive background never
+    // needs more than 432px (108dp at xxxhdpi), and 512 buys the same dither for a quarter of it.
+    const BG = 512;
     await shoot(browser, iconSVG(key), S, S, 'assets/icon.png');
-    await shoot(browser, groundSVG(key), S, S, 'assets/android-icon-background.png');
+    await shoot(browser, groundSVG(key, { w: BG }), BG, BG, 'assets/android-icon-background.png');
     await shoot(browser, markSVG(key, { scale: FG }), S, S, 'assets/android-icon-foreground.png', true);
     await shoot(browser, monoSVG(key, { scale: FG }), S, S, 'assets/android-icon-monochrome.png', true);
     await shoot(browser, markSVG(key, { scale: SPLASH }), S, S, 'assets/splash-icon.png', true);
     await shoot(browser, iconSVG(key, { w: 196 }), 196, 196, 'assets/favicon.png');
     console.log(`shipped: ${key}`);
+  } else if (cmd === 'verify') {
+    // Reads the PNGs that were actually written, not the SVG they came from. Every slot is shown
+    // wearing the transform the system applies to it — mask, 72dp crop, monochrome tint, splash
+    // ground — because that is the only place these can be wrong.
+    const tint = (bg, ink, label) =>
+      `<div class="c"><div class="tile" style="background:${bg};clip-path:path('${squircle(150)}')">
+         <div class="mono" style="background:${ink}"></div></div><div class="lb">${label}</div></div>`;
+    const crop = (mask, size) => {
+      const inner = size * (108 / 72);
+      const off = (size - inner) / 2;
+      return `<div class="tile" style="width:${size}px;height:${size}px;${mask};overflow:hidden;position:relative">
+        <img src="../../assets/android-icon-background.png" style="position:absolute;width:${inner}px;height:${inner}px;left:${off}px;top:${off}px">
+        <img src="../../assets/android-icon-foreground.png" style="position:absolute;width:${inner}px;height:${inner}px;left:${off}px;top:${off}px">
+      </div>`;
+    };
+    const html = `<!doctype html><meta charset="utf-8"><style>
+      body{margin:0;background:#0B0B0C;padding:36px;width:max-content;
+        font:500 11px/1.4 -apple-system,Segoe UI,sans-serif;color:#6c727c}
+      h3{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#4a4f57;margin:26px 0 12px;font-weight:600}
+      .row{display:flex;gap:24px;align-items:flex-end}
+      .c{display:flex;flex-direction:column;gap:10px;align-items:center}
+      .lb{letter-spacing:.06em}
+      .tile{width:150px;height:150px}
+      /* Longhand. Chrome ignores the -webkit-mask shorthand's "center/cover" form and the tile
+         renders empty, which reads as a blank monochrome asset rather than as a broken mock. */
+      .mono{width:100%;height:100%;
+        -webkit-mask-image:url(../../assets/android-icon-monochrome.png);
+        -webkit-mask-size:contain;-webkit-mask-repeat:no-repeat;-webkit-mask-position:center;
+        mask-image:url(../../assets/android-icon-monochrome.png);
+        mask-size:contain;mask-repeat:no-repeat;mask-position:center}
+      img{display:block}
+      .phone{width:200px;height:420px;background:#08090B;border-radius:26px;
+        display:flex;align-items:center;justify-content:center;border:1px solid #22262E}
+    </style>
+    <h3>icon.png &mdash; mascara squircle e circular</h3>
+    <div class="row">
+      <div class="c"><img src="../../assets/icon.png" style="width:150px;height:150px;clip-path:path('${squircle(150)}')"><div class="lb">squircle</div></div>
+      <div class="c"><img src="../../assets/icon.png" style="width:150px;height:150px;border-radius:50%"><div class="lb">circulo</div></div>
+      <div class="c"><img src="../../assets/icon.png" style="width:96px;height:96px;clip-path:path('${squircle(96)}')"><div class="lb">48dp @2x</div></div>
+      <div class="c"><img src="../../assets/icon.png" style="width:56px;height:56px;clip-path:path('${squircle(56)}')"><div class="lb">56px</div></div>
+    </div>
+
+    <h3>adaptive &mdash; fundo + frente, recortado nos 72dp que o launcher mostra</h3>
+    <div class="row">
+      <div class="c">${crop(`clip-path:path('${squircle(150)}')`, 150)}<div class="lb">squircle</div></div>
+      <div class="c">${crop('border-radius:50%', 150)}<div class="lb">circulo</div></div>
+      <div class="c">${crop('border-radius:16px', 150)}<div class="lb">rounded square</div></div>
+      <div class="c">${crop(`clip-path:path('${squircle(96)}')`, 96)}<div class="lb">48dp @2x</div></div>
+    </div>
+
+    <h3>monochrome &mdash; icone tematizado, o sistema tinge o alpha</h3>
+    <div class="row">
+      <!-- Also forces the decode. A mask-image is not network activity Chrome waits on, so with the
+           asset referenced only from CSS every tinted tile screenshots empty. -->
+      <div class="c"><div class="tile" style="background:#101216;clip-path:path('${squircle(150)}')">
+        <img src="../../assets/android-icon-monochrome.png" style="width:100%;height:100%"></div>
+        <div class="lb">silhueta bruta</div></div>
+      ${tint('#3A2E1F', '#E8C79A', 'tema quente')}
+      ${tint('#1E2A3A', '#A8C8E8', 'tema frio')}
+      ${tint('#E8E4DC', '#3A3630', 'tema claro')}
+    </div>
+
+    <h3>splash &mdash; sobre #08090B, imageWidth 160</h3>
+    <div class="row">
+      <div class="phone"><img src="../../assets/splash-icon.png" style="width:160px"></div>
+      <div class="c"><img src="../../assets/favicon.png" style="width:48px;height:48px"><div class="lb">favicon 48</div></div>
+      <div class="c"><img src="../../assets/favicon.png" style="width:32px;height:32px"><div class="lb">32</div></div>
+      <div class="c"><img src="../../assets/favicon.png" style="width:16px;height:16px"><div class="lb">16</div></div>
+    </div>`;
+    await mkdir('shots/icon', { recursive: true });
+    await writeFile('shots/icon/verify.html', html);
+    const page = await browser.newPage();
+    await page.setViewport({ width: 900, height: 1180, deviceScaleFactor: 1 });
+    await page.goto(pathToFileURL('shots/icon/verify.html').href, { waitUntil: 'networkidle0' });
+    await page.screenshot({ path: 'shots/icon/6-verify.png', fullPage: true });
+    await page.close();
+    console.log('verify -> shots/icon/6-verify.png');
   } else {
     await mkdir('shots/icon', { recursive: true });
     const keys = Object.keys(TREATMENTS);
