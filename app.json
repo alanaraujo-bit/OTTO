@@ -6,26 +6,36 @@
     "orientation": "portrait",
     "scheme": "otto",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
     "icon": "./assets/icon.png",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#08090B"
-    },
     "assetBundlePatterns": [
       "**/*"
     ],
     "android": {
       "package": "com.alanaraujo.otto",
-      "edgeToEdgeEnabled": true,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "otto-financas.vercel.app",
+              "pathPrefix": "/divida"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png",
         "backgroundColor": "#08090B"
       },
-      "softwareKeyboardLayoutMode": "resize",
+      "softwareKeyboardLayoutMode": "pan",
       "permissions": [
         "android.permission.SCHEDULE_EXACT_ALARM",
         "android.permission.POST_NOTIFICATIONS",
@@ -39,7 +49,6 @@
     },
     "plugins": [
       "expo-router",
-      "expo-sqlite",
       "expo-font",
       [
         "expo-splash-screen",
@@ -49,8 +58,22 @@
           "imageWidth": 160
         }
       ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Permita que o OTTO use o Face ID para confirmar exclusões irreversíveis."
+        }
+      ],
       "expo-secure-store",
-      "expo-web-browser"
+      [
+        "expo-notifications",
+        {
+          "color": "#F2F4F7",
+          "defaultChannel": "otto.alerts"
+        }
+      ],
+      "expo-web-browser",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true,
