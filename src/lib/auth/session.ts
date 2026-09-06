@@ -11,6 +11,8 @@ export interface Session {
   email: string;
   provider: Provider;
   createdAt: number;
+  /** JWT held only in secure device storage, never in the app bundle or ledger. */
+  accessToken: string;
 }
 
 interface SessionState {
@@ -28,7 +30,8 @@ export const useSession = create<SessionState>((set) => ({
   hydrate: async () => {
     try {
       const raw = await SecureStore.getItemAsync(KEY);
-      set({ session: raw ? (JSON.parse(raw) as Session) : null, hydrated: true });
+      const session = raw ? (JSON.parse(raw) as Session) : null;
+      set({ session: session?.accessToken ? session : null, hydrated: true });
     } catch {
       // A corrupt or unreadable store must not lock the owner out of their own device.
       set({ session: null, hydrated: true });

@@ -167,7 +167,7 @@ export async function deleteEntry(id: string): Promise<void> {
 export async function settleOccurrence(
   seriesId: string,
   scheduled: string,
-  entry: Omit<Entry, 'seriesId' | 'settlesDate'>,
+  entry: Omit<Entry, 'seriesId' | 'settlesDate' | 'recordedAt'>,
 ): Promise<void> {
   await change((ledger) => {
     const taken = ledger.entries.some(
@@ -181,7 +181,13 @@ export async function settleOccurrence(
           ? { ...item, paidCount: Math.min(item.totalCount, item.paidCount + 1) }
           : item,
       ),
-      entries: [...ledger.entries, { ...entry, seriesId, settlesDate: scheduled }],
+      // Stamped here rather than by the caller, so every settlement in the app carries the same
+      // clock and no screen can forget it. This is the moment the payment became known — the one
+      // fact a shared debt can show that `date` cannot, because `date` is backdatable.
+      entries: [
+        ...ledger.entries,
+        { ...entry, seriesId, settlesDate: scheduled, recordedAt: new Date().toISOString() },
+      ],
     };
   });
 }

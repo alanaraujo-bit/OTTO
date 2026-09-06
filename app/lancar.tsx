@@ -230,6 +230,7 @@ export default function Lancar() {
           seriesId: null,
           settlesDate: null,
           date: dayKey(new Date()),
+          recordedAt: new Date().toISOString(),
           amountCents: cents,
           direction,
           title: title.trim() || chosen,

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
-import { addMonths, format, startOfMonth, subMonths } from 'date-fns';
+import { format, startOfMonth, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Screen } from '@/ui/Screen';
 import { BackBar } from '@/ui/BackBar';
@@ -10,9 +10,11 @@ import { Reveal } from '@/ui/Reveal';
 import { Press } from '@/ui/Press';
 import { Button } from '@/ui/Button';
 import { DebtSharePanel } from '@/ui/DebtSharePanel';
+import { RecurrenceDetail } from '@/ui/RecurrenceDetail';
 import { Field } from '@/ui/Field';
 import { MoneyField } from '@/ui/MoneyField';
 import { KeyboardAwareScrollView } from '@/ui/KeyboardAwareScrollView';
+import { Amount } from '@/ui/Amount';
 import { Txt } from '@/theme/text';
 import { color, radius, space } from '@/theme/tokens';
 import { useSnackbar } from '@/ui/Snackbar';
@@ -21,8 +23,9 @@ import { deleteSeries, insertSeries, settleOccurrence, updateSeries } from '@/db
 import { pickerOrder } from '@/domain/category';
 import { dayKey, nextOpen, parseDay } from '@/domain/projection';
 import { commitmentFor } from '@/domain/commitments';
+import { debtHistory, type DebtHistory } from '@/domain/settlement';
 import { brlShort } from '@/domain/money';
-import type { Series, SeriesKind } from '@/domain/model';
+import type { Occurrence, Series, SeriesKind } from '@/domain/model';
 
 const ENTER = { delay: 160, step: 70, cap: 6, rise: 10, shift: 26 } as const;
 
@@ -74,6 +77,13 @@ function Form() {
 
   const existing = useMemo(() => series.find((s) => s.id === id) ?? null, [series, id]);
 
+  // Read off the entries, so it stays true to what was actually recorded rather than to the
+  // `parcelas ja pagas` number sitting in the form above it.
+  const history = useMemo(
+    () => (existing ? debtHistory(existing, entries) : { payments: [], untracked: 0 }),
+    [existing, entries],
+  );
+
   const [shape, setShape] = useState<Shape>('out');
   const [debtDirection, setDebtDirection] = useState<'out' | 'in'>('out');
   const [title, setTitle] = useState('');
@@ -86,6 +96,9 @@ function Form() {
   const [saving, setSaving] = useState(false);
   const [armed, setArmed] = useState(false);
   const [settling, setSettling] = useState(false);
+  // A rule that already exists opens as a reading. Creating one has nothing to read, so the form is
+  // the only sensible landing and this starts true there.
+  const [editing, setEditing] = useState(false);
 
   /*
    * What this rule still owes, and where an antecipação would land.
@@ -230,6 +243,27 @@ function Form() {
       snack(e instanceof Error ? e.message : 'Não consegui salvar.', 'error');
     }
   };
+
+  /*
+   * Reading, unless the owner asked to change something.
+   *
+   * Placed after every hook above, so the two modes never take different hook paths. A new
+   * recurrence has no `existing` and therefore lands straight in the form, which is right: there is
+   * nothing to read yet.
+   */
+  if (existing && !editing) {
+    return (
+      <RecurrenceDetail
+        series={existing}
+        history={history}
+        open={open}
+        canSettle={Boolean(settleAccount) && !existing.linkedShareToken}
+        settling={settling}
+        onSettle={() => void settleNow()}
+        onEdit={() => setEditing(true)}
+      />
+    );
+  }
 
   return (
     <>
@@ -417,52 +451,6 @@ function Form() {
           </View>
         ) : null}
 
-        {existing?.kind === 'debt' && !existing.linkedShareToken ? (
-          <DebtSharePanel series={existing} />
-        ) : null}
-
-        {existing?.linkedShareToken ? (
-          <View style={styles.linkedNotice}>
-            <View style={styles.consequenceRule} />
-            <Txt variant="body" t="ink">
-              Acompanhamento conectado a {existing.counterparty}.
-            </Txt>
-            <Txt variant="micro" t="faint" style={styles.hint}>
-              O progresso vem da dívida original. Só quem compartilhou confirma as parcelas.
-            </Txt>
-          </View>
-        ) : null}
-
-        {/*
-          Antecipar, from the rule's own screen.
-          
-          The razão offers this on the forecast row, which is the right place when the owner is
-          reading the tape. But the thought that starts this is usually about the rule — "meu salário
-          caiu, e a regra diz dia 5" — and it arrives here, not there. So the same action, named by
-          what is actually outstanding: the day it was due, and how far from today that is.
-
-          It only appears while something is genuinely open. A rule whose turn this month is already
-          settled has nothing to bring forward, and a button that would record a second copy of the
-          salary is exactly the wrong thing to leave sitting under one that just did.
-        */}
-        {existing && open && settleAccount && !existing.linkedShareToken ? (
-          <View style={styles.settle}>
-            <Button
-              label={
-                (existing.direction === 'in' ? 'Recebi' : 'Paguei') +
-                ' — lançar hoje'
-              }
-              variant="outline"
-              onPress={() => void settleNow()}
-              disabled={settling}
-              loading={settling}
-            />
-            <Txt variant="micro" t="faint" center style={styles.settleNote}>
-              {`Em aberto: ${format(parseDay(open.date), "d 'de' MMMM", { locale: ptBR })}. Lançando hoje, a próxima cai em ${format(addMonths(parseDay(open.date), 1), "d 'de' MMMM", { locale: ptBR })}.`}
-            </Txt>
-          </View>
-        ) : null}
-
         <View style={styles.gap} />
         <Button
           label={existing ? 'Salvar' : 'Criar recorrência'}
@@ -470,6 +458,18 @@ function Form() {
           disabled={!valid || saving}
           loading={saving}
         />
+
+        {/* A way back out that is not the system gesture, and that does not discard by looking
+            like the primary action. Only in edit mode: creating already has BackBar. */}
+        {existing ? (
+          <Press
+            onPress={() => setEditing(false)}
+            style={styles.detailEdit}
+            accessibilityLabel="Cancelar edição"
+          >
+            <Txt variant="label" t="muted" center>Cancelar</Txt>
+          </Press>
+        ) : null}
 
         {existing ? (
           <Press
@@ -499,6 +499,7 @@ function Form() {
     </>
   );
 }
+
 
 /**
  * The kind the draft should carry.
@@ -539,8 +540,23 @@ function num(raw: string, lo: number, hi: number): number | null {
 }
 
 const styles = StyleSheet.create({
-  settle: { paddingTop: space.lg },
-  settleNote: { paddingTop: space.sm },
+  // The reading. Spacing is looser than the form's on purpose: a form is a queue of controls and
+  // wants density, while this is meant to be taken in at a glance without scrolling.
+  detailTitle: { paddingTop: space.sm, paddingBottom: space.xl },
+  detailUnder: { paddingTop: space.xs },
+  detailRule: { height: StyleSheet.hairlineWidth, backgroundColor: color.hairlineStrong, marginTop: space.xxl },
+  detailFacts: { paddingTop: space.sm },
+  detailFact: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.hairline,
+  },
+  detailFactLast: { borderBottomWidth: 0 },
+  detailSettle: { paddingTop: space.xl },
+  detailEdit: { minHeight: 48, justifyContent: 'center', marginTop: space.lg },
   flex: { flex: 1 },
   scroll: { paddingTop: space.md, paddingBottom: space.xxxl },
   gap: { height: space.lg },

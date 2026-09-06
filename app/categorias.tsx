@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { Screen } from '@/ui/Screen';
 import { BackBar } from '@/ui/BackBar';
 import { Reveal } from '@/ui/Reveal';
@@ -178,28 +178,26 @@ function Body() {
 
         {rows.map((row, i) => (
           <Reveal key={row.view.name} index={Math.min(i + 2, ENTER.cap)} {...ENTER}>
-            <Animated.View layout={LinearTransition.duration(duration.state)}>
-              {open === row.view.name ? (
-                <Editor
-                  initial={row.view}
-                  taken={taken}
-                  onDone={async (message) => {
-                    setOpen(null);
-                    await load();
-                    if (message) snack(message, 'info');
-                  }}
-                  onCancel={() => setOpen(null)}
-                  onError={(e) => snack(saidPlainly(e), 'error')}
-                />
-              ) : (
-                <Row
-                  view={row.view}
-                  spent={row.spent}
-                  burstsOn={row.reading?.burstsOn ?? null}
-                  onPress={() => setOpen(row.view.name)}
-                />
-              )}
-            </Animated.View>
+            {open === row.view.name ? (
+              <Editor
+                initial={row.view}
+                taken={taken}
+                onDone={async (message) => {
+                  setOpen(null);
+                  await load();
+                  if (message) snack(message, 'info');
+                }}
+                onCancel={() => setOpen(null)}
+                onError={(e) => snack(saidPlainly(e), 'error')}
+              />
+            ) : (
+              <Row
+                view={row.view}
+                spent={row.spent}
+                burstsOn={row.reading?.burstsOn ?? null}
+                onPress={() => setOpen(row.view.name)}
+              />
+            )}
           </Reveal>
         ))}
       </KeyboardAwareScrollView>

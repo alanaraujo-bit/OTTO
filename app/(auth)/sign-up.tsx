@@ -1,16 +1,34 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Screen } from '@/ui/Screen';
 import { BackBar } from '@/ui/BackBar';
+import { Reveal } from '@/ui/Reveal';
+import { Wordmark } from '@/ui/Wordmark';
 import { Field } from '@/ui/Field';
+import { KeyboardAwareScrollView } from '@/ui/KeyboardAwareScrollView';
 import { Button } from '@/ui/Button';
 import { SocialRow } from '@/ui/SocialRow';
 import { StrengthMeter } from '@/ui/StrengthMeter';
 import { useSnackbar } from '@/ui/Snackbar';
+import { useFocusSignal } from '@/ui/FocusSignal';
 import { Txt } from '@/theme/text';
 import { space } from '@/theme/tokens';
 import { localAuth, AuthError } from '@/lib/auth/provider';
+
+/**
+ * The arrival.
+ *
+ * Android's native push is short and cannot be lengthened — `animationDuration` is honoured on iOS
+ * only — so a transition built on the slide alone is over before it registers. The length has to
+ * come from this side instead: the content enters travelling in the same direction the page did, and
+ * keeps settling for most of a second after the page itself has landed.
+ *
+ * The easing is heavily front-loaded, so the top of the screen is essentially composed by the time
+ * the slide ends and only the lower half is still coasting. That is the difference between a page
+ * that arrives empty and fills in, and one long continuous movement.
+ */
+const ENTER = { delay: 40, step: 72, cap: 8, shift: 34, rise: 12 } as const;
 import { useSession } from '@/lib/auth/session';
 import {
   passwordStrength,
@@ -19,8 +37,25 @@ import {
   validatePassword,
 } from '@/lib/validation';
 
+/** The body sits one level inside `Screen`, so `useFocusSignal` has the provider above it. */
 export default function SignUp() {
+  return (
+    <Screen>
+      <SignUpBody />
+    </Screen>
+  );
+}
+
+function SignUpBody() {
   const snack = useSnackbar();
+  const { look } = useFocusSignal();
+
+  /** Back is a look to the left, forward a look to the right. The mark leads the transition. */
+  const back = useCallback(() => {
+    look(-1);
+    if (router.canGoBack()) router.back();
+    else router.replace('/sign-in');
+  }, [look]);
   const signIn = useSession((s) => s.signIn);
   const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
@@ -80,26 +115,35 @@ export default function SignUp() {
   );
 
   return (
-    <Screen>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        <BackBar />
+    <KeyboardAwareScrollView
+      contentContainerStyle={styles.scroll}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      {/* The mark comes along. It sits at the same 22dp it shrinks to on the previous screen, so
+          the lateral slide reads as content moving under one continuous brand rather than as two
+          unrelated pages. And it keeps watching: this is the form where it matters most. */}
+      <Reveal index={0} {...ENTER} rise={0}>
+        <View style={styles.top}>
+          <BackBar onPress={back} />
+          <Wordmark height={22} alive />
+        </View>
+      </Reveal>
 
-        <View style={styles.block}>
-          <View style={styles.head}>
-            <Txt variant="title" f="sansSemibold">
-              Vamos começar.
-            </Txt>
-            <Txt variant="body" t="muted" style={styles.sub}>
-              Leva menos de um minuto. Seus dados ficam no seu aparelho.
-            </Txt>
-          </View>
+      <View style={styles.block}>
+        <Reveal index={1} {...ENTER} style={styles.head}>
+          <Txt variant="title" f="sansSemibold">
+            Vamos começar.
+          </Txt>
+          <Txt variant="body" t="muted" style={styles.sub}>
+            Leva menos de um minuto. Seus dados ficam no seu aparelho.
+          </Txt>
+        </Reveal>
 
-          <View style={styles.form}>
+        <View style={styles.form}>
+          <Reveal index={2} {...ENTER}>
             <Field
+              index={1}
               label="Nome"
               value={name}
               onChangeText={(v) => {
@@ -114,8 +158,11 @@ export default function SignUp() {
               onSubmitEditing={() => emailRef.current?.focus()}
               submitBehavior="submit"
             />
+          </Reveal>
 
+          <Reveal index={3} {...ENTER}>
             <Field
+              index={2}
               ref={emailRef}
               label="E-mail"
               value={email}
@@ -132,8 +179,11 @@ export default function SignUp() {
               onSubmitEditing={() => passwordRef.current?.focus()}
               submitBehavior="submit"
             />
+          </Reveal>
 
+          <Reveal index={4} {...ENTER}>
             <Field
+              index={3}
               ref={passwordRef}
               label="Senha"
               value={password}
@@ -154,50 +204,55 @@ export default function SignUp() {
               }}
             />
             <StrengthMeter strength={strength} />
-          </View>
+          </Reveal>
+        </View>
 
+        <Reveal index={5} {...ENTER}>
           <Button
             label="Criar conta"
             onPress={submit}
             loading={busy === 'register'}
             disabled={busy !== null && busy !== 'register'}
           />
+        </Reveal>
 
+        <Reveal index={6} {...ENTER}>
           <Txt variant="micro" t="faint" style={styles.terms}>
             Ao criar sua conta você concorda com os Termos de Uso e com a Política de Privacidade
             do OTTO.
           </Txt>
+        </Reveal>
 
-          <View style={styles.social}>
-            <SocialRow
-              onGoogle={() => void social('google')}
-              onApple={() => void social('apple')}
-              busy={busy !== null}
-            />
-          </View>
-        </View>
+        <Reveal index={7} {...ENTER} style={styles.social}>
+          <SocialRow
+            onGoogle={() => void social('google')}
+            onApple={() => void social('apple')}
+            busy={busy !== null}
+          />
+        </Reveal>
+      </View>
 
-        <View style={styles.footer}>
-          <Txt variant="label" t="faint">
-            Já tem conta?{' '}
+      <Reveal index={8} {...ENTER} style={styles.footer}>
+        <Txt variant="label" t="faint">
+          Já tem conta?{' '}
+        </Txt>
+        <Pressable
+          onPress={back}
+          hitSlop={12}
+          accessibilityRole="button"
+        >
+          <Txt variant="label" f="sansSemibold" t="ink">
+            Entrar
           </Txt>
-          <Pressable
-            onPress={() => (router.canGoBack() ? router.back() : router.replace('/sign-in'))}
-            hitSlop={12}
-            accessibilityRole="button"
-          >
-            <Txt variant="label" f="sansSemibold" t="ink">
-              Entrar
-            </Txt>
-          </Pressable>
-        </View>
-      </ScrollView>
-    </Screen>
+        </Pressable>
+      </Reveal>
+    </KeyboardAwareScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   scroll: { flexGrow: 1 },
+  top: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   block: { flex: 1 },
   head: { paddingTop: space.xxl },
   sub: { paddingTop: space.sm },

@@ -1,9 +1,11 @@
 import { useCallback, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { Screen } from '@/ui/Screen';
+import { Reveal } from '@/ui/Reveal';
 import { BackBar } from '@/ui/BackBar';
 import { Field } from '@/ui/Field';
+import { KeyboardAwareScrollView } from '@/ui/KeyboardAwareScrollView';
 import { Button } from '@/ui/Button';
 import { MailSent } from '@/ui/Icon';
 import { Txt } from '@/theme/text';
@@ -33,7 +35,7 @@ export default function Forgot() {
 
   return (
     <Screen>
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -42,35 +44,42 @@ export default function Forgot() {
 
         {sent ? (
           <View style={styles.done}>
-            <MailSent size={28} />
-            <Txt variant="title" f="sansSemibold" style={styles.doneTitle}>
-              Enviamos o link.
-            </Txt>
-            <Txt variant="body" t="muted" style={styles.sub}>
-              Se existir uma conta para {email.trim().toLowerCase()}, o link de redefinição chega em
-              instantes. Verifique também o spam.
-            </Txt>
-            <View style={styles.doneAction}>
+            <Reveal index={0}>
+              <MailSent size={28} />
+              <Txt variant="title" f="sansSemibold" style={styles.doneTitle}>
+                Enviamos o link.
+              </Txt>
+            </Reveal>
+
+            <Reveal index={1}>
+              <Txt variant="body" t="muted" style={styles.sub}>
+                Se existir uma conta para {email.trim().toLowerCase()}, o link de redefinição chega
+                em instantes. Verifique também o spam.
+              </Txt>
+            </Reveal>
+
+            <Reveal index={2} style={styles.doneAction}>
               <Button
                 label="Voltar para o login"
                 variant="outline"
                 onPress={() => router.replace('/sign-in')}
               />
-            </View>
+            </Reveal>
           </View>
         ) : (
           <View>
-            <View style={styles.head}>
+            <Reveal index={0} style={styles.head}>
               <Txt variant="title" f="sansSemibold">
                 Redefinir senha.
               </Txt>
               <Txt variant="body" t="muted" style={styles.sub}>
                 Informe o e-mail da sua conta e enviamos um link para você criar uma nova senha.
               </Txt>
-            </View>
+            </Reveal>
 
             <View style={styles.form}>
               <Field
+                index={1}
                 label="E-mail"
                 value={email}
                 onChangeText={(v) => {
@@ -88,10 +97,12 @@ export default function Forgot() {
               />
             </View>
 
-            <Button label="Enviar link" onPress={submit} loading={busy} />
+            <Reveal index={2}>
+              <Button label="Enviar link" onPress={submit} loading={busy} />
+            </Reveal>
           </View>
         )}
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </Screen>
   );
 }
@@ -100,7 +111,7 @@ const styles = StyleSheet.create({
   scroll: { flexGrow: 1 },
   head: { paddingTop: space.xxl },
   sub: { paddingTop: space.sm },
-  form: { paddingTop: space.lg, paddingBottom: space.xl },
+  form: { paddingTop: space.sm, paddingBottom: space.xl },
   done: { paddingTop: space.xxxl },
   doneTitle: { paddingTop: space.lg },
   doneAction: { paddingTop: space.xxl },
