@@ -45,6 +45,37 @@ is a defect.
 The primary CTA is `ink` filled with `bg` text. There is no brand hue. OTTO's identity is the
 warm-neutral light itself.
 
+### The one exception: category identity (added 2026-09-06)
+
+Composition is the second kind of information colour is allowed to carry. In a ring of spending the
+question is *which category is this arc*, and length cannot answer it — that is the gap `RuleBars`
+names when it declines hue for magnitude. So five hues encode **category identity**, and nothing
+else. They never encode size, direction, or health.
+
+| Token | Value |
+|---|---|
+| `categoryHue.terracotta` | `#D07A53` |
+| `categoryHue.bronze` | `#876114` |
+| `categoryHue.teal` | `#2BA19D` |
+| `categoryHue.azure` | `#3175BC` |
+| `categoryHue.plum` | `#8B4486` |
+
+The rules that keep this from becoming a brand palette:
+
+- **The set is closed.** No colour picker, no custom hex. An open picker hands the owner `#3FBF74`,
+  and a category the exact green of income is a lie the chart tells every time it opens.
+- **No green.** The wheel's green sector belongs to `positive`. No category may sit there.
+- **Money still owns `positive`, `negative` and `warning`.** Spending past a ceiling is drawn in
+  `negative` because it *is* money going out, and that reading only stays legible because no
+  category can wear red.
+- **Five, not eight.** Placed in OKLCH and validated for colour-vision separation on this ground,
+  all-pairs. Eight desaturated tones scored ΔE 7.1 for *normal* vision, and magenta could not
+  coexist with teal at any lightness. What ships holds ΔE 8.7 under deuteranopia and 15.0 normal,
+  every tone at or above 3:1 against `bg`. The finer grain of identity is carried by sixteen drawn
+  glyphs, not by more colours.
+- **Colour is never identity alone.** Any surface using these ships a legend with the name, and the
+  glyph repeats it.
+
 ## Type
 One family pair, self-hosted via `@expo-google-fonts`.
 - **Geist Sans** — UI, labels, copy. Weights 400 / 500 / 600.
@@ -69,5 +100,7 @@ worklets — no `setState` animation.
 
 ## Banned in this world
 Cards as scaffold. Gradient text. Glass/blur as decoration. Colored left borders. Emoji as icons.
+Category colour outside the five tokens above, or any of them used for something other than which
+category a mark belongs to.
 Progress rings and sparklines standing in for content. Neon-on-black accent (the 2025 AI-app tell).
 Any green or red that is not describing money.

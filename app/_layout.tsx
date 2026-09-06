@@ -135,6 +135,7 @@ export default function RootLayout() {
             <Stack.Screen name="notificacoes" />
             <Stack.Screen name="recorrencias" />
             <Stack.Screen name="tetos" />
+            <Stack.Screen name="categorias" />
             <Stack.Screen name="recorrencia" />
             <Stack.Screen name="divida/[token]" options={{ animation: 'fade' }} />
             <Stack.Screen name="ajustes" options={{ animation: 'none' }} />

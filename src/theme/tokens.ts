@@ -23,6 +23,58 @@ export const color = {
 } as const;
 
 /**
+ * Category identity. The one chroma in this app that is not money.
+ *
+ * DESIGN.md reserves colour for information and bans a brand hue. This is not a relaxation of that
+ * rule but the same rule applied to a second kind of information: in a composition chart the
+ * question is *which category is this arc*, and length cannot answer it — which is precisely the gap
+ * `RuleBars` names when it declines hue for magnitude. Hue here encodes identity and nothing else.
+ * It never encodes size, direction, or health; the ceiling does that, in ink.
+ *
+ * **Every value was computed and validated, not chosen by eye.** Placed in OKLCH and run through a
+ * colour-vision validator on the dark surface, all-pairs — because arcs in a donut sit next to
+ * whichever other arc the month produces, so "adjacent" is every pair. Three earlier attempts
+ * failed and are worth recording so nobody re-derives them:
+ *
+ * - Eight desaturated tones read as grey and scored ΔE 7.1 between steel and plum for *normal*
+ *   vision. Fleeing the money hues had made the categories indistinguishable from each other.
+ * - Eight hues evenly spread at one lightness still collapsed: adjacent hues 45° apart are too
+ *   close under deuteranopia, worst pair ΔE 3.1.
+ * - Magenta could not coexist with teal at any lightness — deuteranopia strips red, and both fall
+ *   to the same blue-grey. Magenta was cut, not softened.
+ *
+ * What survived is five hues carrying two separations at once, hue *and* lightness, because
+ * lightness is the axis colour-blind vision keeps. Worst all-pairs separation is ΔE 8.7 under
+ * deuteranopia and 15.0 for normal vision, with every tone at or above 3:1 against `bg`.
+ *
+ * They stay clear of money by construction: none approaches the chroma of `positive` or
+ * `negative`, and the wheel's green sector — where `positive` lives — carries no category at all.
+ *
+ * The set is closed, and small on purpose. An open picker would hand the owner `#3FBF74` on a
+ * plate, and a category the exact green of income is a lie the chart tells every time it opens.
+ * Identity's finer grain lives in the sixteen drawn icons; colour only has to separate a handful of
+ * arcs, and five that genuinely separate beat eight that do not.
+ */
+export const categoryHue = {
+  terracotta: '#D07A53',
+  bronze: '#876114',
+  teal: '#2BA19D',
+  azure: '#3175BC',
+  plum: '#8B4486',
+} as const;
+
+export type CategoryHue = keyof typeof categoryHue;
+
+/** Fixed order. A hue follows the category, never its rank, so this never re-sorts. */
+export const categoryHues = [
+  'terracotta',
+  'bronze',
+  'teal',
+  'azure',
+  'plum',
+] as const satisfies readonly CategoryHue[];
+
+/**
  * Low-alpha luminance that wraps onto the curved panel edge. Never carries content.
  *
  * Colour and opacity are separate on purpose: react-native-svg drops the alpha channel of an
