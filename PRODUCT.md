@@ -6,9 +6,9 @@
 > with brief-inference and is labeled here.
 
 ## What it is
-OTTO is a single-user personal finance instrument for Android. It is not a budgeting SaaS and has no
-team, no sharing, no multi-tenancy. It exists because its owner has repeatedly failed to stay current
-in generic finance apps.
+OTTO is a personal finance instrument for Android. Each ledger remains private and individually
+owned; a finite debt can be shared, by explicit revocable invitation, with the one person on its
+other side. It exists because its owner has repeatedly failed to stay current in generic finance apps.
 
 ## Who uses it
 One person: Alan (pt-BR). Developer. Owns a Motorola Edge 60 Fusion. Uses the phone one-handed,
@@ -28,15 +28,19 @@ need to open it at all.
 5. Statistics that are actually decision-useful, not decoration.
 6. Category spend control and forward projection ("futuramento").
 7. A notification system that keeps the owner ahead of every due date.
+8. Two-sided finite debts: money the owner owes and money owed to the owner, with a live,
+   privacy-minimized web view and an optional linked mirror in the recipient's app.
 
 ## Constraints
-- Local-first. The data lives on the device. No mandatory server round-trip to read or write.
+- Private-by-default. A ledger lives in the owner's authenticated store; only a deliberately shared
+  debt exposes a minimal public projection through a long, revocable capability URL.
 - Portuguese (pt-BR) throughout. BRL currency.
 - Target device is fixed and known: layout may be tuned to it rather than merely tolerant of it.
 - Must run in Expo Go SDK 54 for the live-preview loop.
 
 ## Explicitly out of scope
-Multi-user, social features, bank sync/Open Finance (phase 5+ at earliest), web app, iOS.
+Teams, public profiles, social feeds, bank sync/Open Finance (phase 5+ at earliest), a general-purpose
+web app, iOS. The public web surface is only the read-only view of one invited debt.
 
 ## Failure modes to design against
 - Any screen that requires reading more than one number to know if things are fine.
