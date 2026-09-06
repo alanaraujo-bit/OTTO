@@ -1,0 +1,10 @@
+.git
+.expo
+.impeccable
+android
+api
+builds
+dist
+node_modules
+otto-qr.png
+*.log

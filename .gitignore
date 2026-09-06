@@ -30,8 +30,10 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# local environment files and secrets
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo
@@ -43,3 +45,14 @@ yarn-error.*
 # OTTO — local verification artefacts
 shots/
 .expo-url.txt
+builds/
+
+.vercel
+
+# Screenshot-review output, same class as shots/: regenerated on demand, never read by the app.
+.impeccable/
+
+# The built APK. Vercel uploads public/ straight from disk on `vercel deploy`, so the download
+# link does not need this file in git — and a 60 MB binary in history is paid for by every clone,
+# forever, on every rebuild that changes one byte of it.
+public/OTTO.apk

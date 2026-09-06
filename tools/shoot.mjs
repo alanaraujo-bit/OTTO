@@ -14,9 +14,9 @@ const OUT = process.env.OTTO_OUT ?? 'shots';
 
 /** Physical panel / density -> logical dp. Insets approximate the real status + gesture bars. */
 export const DEVICE = {
-  width: 444,
-  height: 986,
-  dpr: 2.75,
+  width: Number(process.env.OTTO_WIDTH ?? 444),
+  height: Number(process.env.OTTO_HEIGHT ?? 986),
+  dpr: Number(process.env.OTTO_DPR ?? 2.75),
   statusBar: 28,
   navBar: 20,
 };
