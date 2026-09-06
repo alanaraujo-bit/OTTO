@@ -120,6 +120,10 @@ function ledger(value) {
     if (entryIds.has(item.id)) return null;
     entryIds.add(item.id);
     if (!text(item.id, 80) || !text(item.title) || !text(item.category) || !accountIds.has(item.accountId) || (item.seriesId !== null && !seriesIds.has(item.seriesId)) || (item.settlesDate != null && (item.seriesId === null || !/^\d{4}-\d{2}-\d{2}$/.test(item.settlesDate))) || !Number.isSafeInteger(item.amountCents) || item.amountCents < 0 || !['in', 'out'].includes(item.direction) || !/^\d{4}-\d{2}-\d{2}$/.test(item.date)) return null;
+    // Optional on purpose, exactly like caps: a build older than this field PUTs entries with no
+    // `recordedAt`, and rejecting the whole ledger over a timestamp it has never heard of would
+    // break saving for everyone still on the old app.
+    if (item.recordedAt != null && (typeof item.recordedAt !== 'string' || Number.isNaN(Date.parse(item.recordedAt)))) return null;
   }
   // Optional on purpose: a build older than this field PUTs a document without `caps`, and
   // rejecting its whole ledger over a budget it has never heard of would break saving entirely.
@@ -221,6 +225,7 @@ async function migrate() {
       FOREIGN KEY (user_id, series_id) REFERENCES series(user_id, id) ON DELETE SET NULL
     );
     ALTER TABLE entries ADD COLUMN IF NOT EXISTS settles_date DATE;
+    ALTER TABLE entries ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMPTZ;
     CREATE TABLE IF NOT EXISTS category_caps (
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       category TEXT NOT NULL,
@@ -270,7 +275,7 @@ async function readLedger(userId) {
       WHERE local.user_id = $1
       ORDER BY COALESCE(source.day_of_month, local.day_of_month), COALESCE(source.title, local.title)
     `, [userId]),
-    pool.query('SELECT id, series_id AS "seriesId", to_char(settles_date, \'YYYY-MM-DD\') AS "settlesDate", to_char(date, \'YYYY-MM-DD\') AS date, amount_cents AS "amountCents", direction, title, category, account_id AS "accountId" FROM entries WHERE user_id = $1 ORDER BY date', [userId]),
+    pool.query('SELECT id, series_id AS "seriesId", to_char(settles_date, \'YYYY-MM-DD\') AS "settlesDate", recorded_at AS "recordedAt", to_char(date, \'YYYY-MM-DD\') AS date, amount_cents AS "amountCents", direction, title, category, account_id AS "accountId" FROM entries WHERE user_id = $1 ORDER BY date', [userId]),
     pool.query('SELECT category, cap_cents AS "capCents" FROM category_caps WHERE user_id = $1 ORDER BY category', [userId]),
     pool.query('SELECT name, icon, hue, description FROM categories WHERE user_id = $1 ORDER BY name', [userId]),
   ]);
@@ -304,7 +309,7 @@ async function replaceLedger(userId, next) {
       `, [share.id, share.token, share.owner_user_id, share.source_series_id, share.recipient_name,
         share.accepted_by_user_id, share.accepted_series_id, share.created_at, share.accepted_at]);
     }
-    for (const item of next.entries) await client.query('INSERT INTO entries (id,user_id,series_id,settles_date,date,amount_cents,direction,title,category,account_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [item.id,userId,item.seriesId,item.settlesDate ?? null,item.date,item.amountCents,item.direction,item.title,item.category,item.accountId]);
+    for (const item of next.entries) await client.query('INSERT INTO entries (id,user_id,series_id,settles_date,recorded_at,date,amount_cents,direction,title,category,account_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [item.id,userId,item.seriesId,item.settlesDate ?? null,item.recordedAt ?? null,item.date,item.amountCents,item.direction,item.title,item.category,item.accountId]);
     /*
      * Caps are replaced only when the document actually carries them.
      *
@@ -345,10 +350,39 @@ async function publicShare(token) {
   `, [token]);
   const row = result.rows[0];
   if (!row) return null;
-  return Object.fromEntries(Object.entries(row).map(([key, value]) => [
+  const share = Object.fromEntries(Object.entries(row).map(([key, value]) => [
     key,
     typeof value === 'string' && /^-?\d+$/.test(value) && ['amountCents'].includes(key) ? Number(value) : value,
   ]));
+
+  /*
+   * The payments themselves, and nothing else about the owner's money.
+   *
+   * Scoped by `series_id` to the one debt this token names, and selecting four columns rather than
+   * the row: the token is a capability to watch one debt, not a window into a ledger, and a
+   * `SELECT *` here would put every other lançamento's title one careless join away from a public
+   * endpoint. `account_id` in particular never leaves the server.
+   *
+   * Ascending, because the reader is being handed a sequence to count through. The client reverses
+   * it where the reading is "what happened lately" — that is a presentation choice, and it does not
+   * belong in a payload two screens share.
+   */
+  const paid = await pool.query(`
+    SELECT to_char(entry.date, 'YYYY-MM-DD') AS "paidOn",
+      to_char(COALESCE(entry.settles_date, entry.date), 'YYYY-MM-DD') AS "scheduled",
+      entry.recorded_at AS "recordedAt", entry.amount_cents AS "amountCents"
+    FROM entries entry
+    JOIN debt_shares share ON share.owner_user_id = entry.user_id
+      AND share.source_series_id = entry.series_id
+    WHERE share.token = $1 AND share.revoked_at IS NULL
+    ORDER BY COALESCE(entry.settles_date, entry.date), entry.date
+    LIMIT 480
+  `, [token]);
+
+  return {
+    ...share,
+    payments: paid.rows.map((p) => ({ ...p, amountCents: Number(p.amountCents) })),
+  };
 }
 
 async function shareForDebt(userId, seriesId) {
