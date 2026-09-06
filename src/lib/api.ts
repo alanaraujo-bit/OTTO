@@ -42,9 +42,13 @@ export async function api<T>(path: string, init: RequestInit = {}, authenticated
   const token = useSession.getState().session?.accessToken;
   const method = init.method ?? 'GET';
 
+  // Resolved before the try, so a build that shipped without an API address says exactly that
+  // instead of being laundered into an OfflineError about a server it never tried to reach.
+  const target = url(path);
+
   let response: Response;
   try {
-    response = await fetch(url(path), {
+    response = await fetch(target, {
       ...init,
       // Bounded rather than open-ended, and abortable, so a stalled request ends as a decision
       // instead of as a hang.

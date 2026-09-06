@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npx expo export --platform web",
+  "buildCommand": "EXPO_PUBLIC_API_URL=https://otto-api-production-ed8a.up.railway.app EXPO_PUBLIC_SHARE_URL=https://otto-financas.vercel.app EXPO_PUBLIC_APK_URL=https://otto-financas.vercel.app/OTTO.apk npx expo export --platform web",
   "outputDirectory": "dist",
   "cleanUrls": true,
   "rewrites": [
