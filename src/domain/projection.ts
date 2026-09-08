@@ -475,6 +475,9 @@ export interface TapeItem {
   direction: Direction;
   /** False when this is a projection rather than something that was recorded. */
   settled: boolean;
+  /** The hour the owner gave this lançamento, when they gave one. Always null on a projection —
+      there is no hour to show for money that has not moved yet. */
+  time: string | null;
   installment: { n: number; of: number } | null;
   /**
    * The occurrence this row *is*, when it is still one — the rule and the day it falls on.
@@ -547,6 +550,7 @@ export function ledgerTape(
       amountCents: e.amountCents,
       direction: e.direction,
       settled: true,
+      time: e.time,
       installment: null,
       occurrence: null,
     });
@@ -563,6 +567,7 @@ export function ledgerTape(
         amountCents: o.amountCents,
         direction: o.direction,
         settled: false,
+        time: null,
         installment: o.installment,
         occurrence: { seriesId: o.seriesId, scheduled: o.date, accountId: o.accountId },
       });

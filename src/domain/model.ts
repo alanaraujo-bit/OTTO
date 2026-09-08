@@ -96,6 +96,15 @@ export interface Entry {
   settlesDate: string | null;
   date: string;
   /**
+   * The hour the money moved, `HH:mm` in local time. Optional in the same sense `date` itself is
+   * optional to get exactly right: null is not a gap, it is the owner not having bothered — a
+   * lançamento is complete with only a day, the way it always was before this field existed.
+   *
+   * Backdatable together with `date`, and for the same reason: this describes when the money moved,
+   * not when OTTO heard about it. That second fact is `recordedAt`, below, and nobody edits it.
+   */
+  time: string | null;
+  /**
    * When this entry was written down, ISO-8601 with a time. Null on every row recorded before the
    * field existed.
    *

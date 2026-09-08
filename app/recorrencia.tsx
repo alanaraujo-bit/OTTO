@@ -134,6 +134,7 @@ function Form() {
       await settleOccurrence(existing.id, open.date, {
         id: Crypto.randomUUID(),
         date: today,
+        time: null,
         amountCents: existing.amountCents,
         direction: existing.direction,
         title: existing.title,

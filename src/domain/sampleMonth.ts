@@ -134,6 +134,7 @@ export function sampleMonth(today: Date = new Date()): SampleLedger {
     seriesId: null,
     settlesDate: null,
     recordedAt: null,
+    time: null,
     date: day(subDays(first, 1)),
     amountCents: 412_000,
     direction: 'in',
@@ -158,6 +159,7 @@ export function sampleMonth(today: Date = new Date()): SampleLedger {
         // free to bill it again.
         settlesDate: byTitle.has(r.title) ? date : null,
         recordedAt: null,
+        time: null,
         date,
         amountCents: r.cents,
         direction: r.direction,
@@ -184,6 +186,7 @@ export function sampleMonth(today: Date = new Date()): SampleLedger {
         seriesId: null,
         settlesDate: null,
         recordedAt: null,
+        time: null,
         date,
         amountCents: Math.round(v.low + random() * (v.high - v.low)),
         direction: 'out',

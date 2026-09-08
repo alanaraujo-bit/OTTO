@@ -378,7 +378,7 @@ function ItemRow({
   const note = item.installment
     ? item.category + ' · parcela ' + item.installment.n + '/' + item.installment.of
     : item.settled
-      ? item.category
+      ? item.category + (item.time ? ' · ' + item.time : '')
       : item.category + ' · previsto';
 
   const body = (
@@ -425,6 +425,7 @@ function ItemRow({
               void settleOccurrence(seriesId, scheduled, {
                 id: Crypto.randomUUID(),
                 date: today,
+                time: null,
                 amountCents: item.amountCents,
                 direction: item.direction,
                 title: item.title,

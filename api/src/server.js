@@ -124,6 +124,8 @@ function ledger(value) {
     // `recordedAt`, and rejecting the whole ledger over a timestamp it has never heard of would
     // break saving for everyone still on the old app.
     if (item.recordedAt != null && (typeof item.recordedAt !== 'string' || Number.isNaN(Date.parse(item.recordedAt)))) return null;
+    // Same contract, same reason: an older build PUTs entries with no `time` at all.
+    if (item.time != null && !/^([01]\d|2[0-3]):[0-5]\d$/.test(item.time)) return null;
   }
   // Optional on purpose: a build older than this field PUTs a document without `caps`, and
   // rejecting its whole ledger over a budget it has never heard of would break saving entirely.
@@ -226,6 +228,7 @@ async function migrate() {
     );
     ALTER TABLE entries ADD COLUMN IF NOT EXISTS settles_date DATE;
     ALTER TABLE entries ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMPTZ;
+    ALTER TABLE entries ADD COLUMN IF NOT EXISTS "time" TEXT;
     CREATE TABLE IF NOT EXISTS category_caps (
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       category TEXT NOT NULL,
@@ -275,7 +278,7 @@ async function readLedger(userId) {
       WHERE local.user_id = $1
       ORDER BY COALESCE(source.day_of_month, local.day_of_month), COALESCE(source.title, local.title)
     `, [userId]),
-    pool.query('SELECT id, series_id AS "seriesId", to_char(settles_date, \'YYYY-MM-DD\') AS "settlesDate", recorded_at AS "recordedAt", to_char(date, \'YYYY-MM-DD\') AS date, amount_cents AS "amountCents", direction, title, category, account_id AS "accountId" FROM entries WHERE user_id = $1 ORDER BY date', [userId]),
+    pool.query('SELECT id, series_id AS "seriesId", to_char(settles_date, \'YYYY-MM-DD\') AS "settlesDate", recorded_at AS "recordedAt", to_char(date, \'YYYY-MM-DD\') AS date, "time", amount_cents AS "amountCents", direction, title, category, account_id AS "accountId" FROM entries WHERE user_id = $1 ORDER BY date', [userId]),
     pool.query('SELECT category, cap_cents AS "capCents" FROM category_caps WHERE user_id = $1 ORDER BY category', [userId]),
     pool.query('SELECT name, icon, hue, description FROM categories WHERE user_id = $1 ORDER BY name', [userId]),
   ]);
@@ -309,7 +312,7 @@ async function replaceLedger(userId, next) {
       `, [share.id, share.token, share.owner_user_id, share.source_series_id, share.recipient_name,
         share.accepted_by_user_id, share.accepted_series_id, share.created_at, share.accepted_at]);
     }
-    for (const item of next.entries) await client.query('INSERT INTO entries (id,user_id,series_id,settles_date,recorded_at,date,amount_cents,direction,title,category,account_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [item.id,userId,item.seriesId,item.settlesDate ?? null,item.recordedAt ?? null,item.date,item.amountCents,item.direction,item.title,item.category,item.accountId]);
+    for (const item of next.entries) await client.query('INSERT INTO entries (id,user_id,series_id,settles_date,recorded_at,date,"time",amount_cents,direction,title,category,account_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [item.id,userId,item.seriesId,item.settlesDate ?? null,item.recordedAt ?? null,item.date,item.time ?? null,item.amountCents,item.direction,item.title,item.category,item.accountId]);
     /*
      * Caps are replaced only when the document actually carries them.
      *

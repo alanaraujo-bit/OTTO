@@ -11,6 +11,7 @@ import { Button } from '@/ui/Button';
 import { Field } from '@/ui/Field';
 import { KeyboardAwareScrollView } from '@/ui/KeyboardAwareScrollView';
 import { Backspace } from '@/ui/Icon';
+import { MonthStepper } from '@/ui/MonthStepper';
 import { Txt } from '@/theme/text';
 import { color, radius, space } from '@/theme/tokens';
 import { duration } from '@/theme/motion';
@@ -18,7 +19,7 @@ import { useSnackbar } from '@/ui/Snackbar';
 import { saidPlainly } from '@/lib/errors';
 import { useLedger } from '@/state/ledger';
 import { deleteEntry, insertEntry, settleOccurrence, updateEntry } from '@/db/repo';
-import { format } from 'date-fns';
+import { addDays, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { dayKey, parseDay, project } from '@/domain/projection';
 import { settled } from '@/domain/settlement';
@@ -78,6 +79,12 @@ export default function Lancar() {
   const [armed, setArmed] = useState(false);
   /** The occurrence this lançamento settles, when the owner says it settles one. */
   const [settles, setSettles] = useState<Occurrence | null>(null);
+  /** The day the money moved. Defaults to today; the owner may backdate, never postdate — an entry
+      is a fact, and a fact cannot sit in the future. */
+  const [date, setDate] = useState(today);
+  /** `HH:mm`, or empty for "the owner did not say". Free text, formatted as it is typed. */
+  const [time, setTime] = useState('');
+  const [timeTouched, setTimeTouched] = useState(false);
 
   useEffect(() => {
     if (!armed) return;
@@ -94,7 +101,25 @@ export default function Lancar() {
     setTitle(existing.title);
     setCategory(existing.category);
     setAccountId(existing.accountId);
+    setDate(existing.date);
+    setTime(existing.time ?? '');
   }, [existing]);
+
+  // A settlement is dated today by definition — see `settleOccurrence`'s own note. Choosing one
+  // after having backdated the form would leave the date on screen contradicting what Salvar is
+  // about to write, so the chip take back the one day a settlement is allowed to have.
+  useEffect(() => {
+    if (settles) setDate(today);
+  }, [settles, today]);
+
+  const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const timeValid = time === '' || TIME_RE.test(time);
+
+  const onTimeChange = (raw: string) => {
+    const digits = raw.replace(/\D/g, '').slice(0, 4);
+    setTime(digits.length > 2 ? `${digits.slice(0, 2)}:${digits.slice(2)}` : digits);
+    setTimeTouched(false);
+  };
 
   /**
    * Everywhere a lançamento can land, accounts before cards.
@@ -145,14 +170,17 @@ export default function Lancar() {
     const cap = caps.find((c) => c.category.trim().toLocaleLowerCase('pt-BR') === key);
     if (!cap) return null;
 
-    const reading = capReading(cap, entries, series, today);
+    // Read against the month this lançamento actually lands in — its own `date`, not today's. A
+    // backdated purchase measured against the wrong month would name a ceiling it never touched
+    // and stay silent about the one it did, which is worse than saying nothing.
+    const reading = capReading(cap, entries, series, date);
     const after = reading.spent + cents;
     if (after <= cap.capCents) return null;
 
     return reading.spent >= cap.capCents
       ? `Já passou o teto de ${brlShort(cap.capCents)} em ${category}. Isto leva a ${brlShort(after)}.`
       : `Isto passa o teto de ${brlShort(cap.capCents)} em ${category}, em ${brlShort(after - cap.capCents)}.`;
-  }, [category, cents, direction, caps, entries, series, today]);
+  }, [category, cents, direction, caps, entries, series, date]);
 
   /**
    * What the ledger is still waiting on, this month.
@@ -189,6 +217,11 @@ export default function Lancar() {
 
   const save = async () => {
     if (!ready || saving) return;
+    if (!timeValid) {
+      setTimeTouched(true);
+      snack('Hora inválida. Use HH:MM.', 'error');
+      return;
+    }
     const account = chosen;
     if (!account) {
       snack('Nenhuma conta encontrada.', 'error');
@@ -198,6 +231,7 @@ export default function Lancar() {
     setSaving(true);
     try {
       const chosen = category ?? (direction === 'in' ? 'Renda' : 'Outros');
+      const time_ = time === '' ? null : time;
       if (existing) {
         await updateEntry({
           ...existing,
@@ -206,6 +240,13 @@ export default function Lancar() {
           title: title.trim() || chosen,
           category: chosen,
           accountId: account.id,
+          date,
+          // A settlement recorded before `settlesDate` existed relies on `date` itself as the key
+          // that says which occurrence it retired — see `settled()`. Moving `date` out from under
+          // that key on a plain edit would hand the occurrence back to the projection, and the
+          // month would show the same money twice. Pin the key here, once, before it moves.
+          settlesDate: existing.settlesDate ?? (existing.seriesId ? existing.date : null),
+          time: time_,
         });
       } else if (settles) {
         /*
@@ -218,6 +259,7 @@ export default function Lancar() {
         await settleOccurrence(settles.seriesId, settles.date, {
           id: Crypto.randomUUID(),
           date: dayKey(new Date()),
+          time: time_,
           amountCents: cents,
           direction,
           title: title.trim() || chosen,
@@ -229,7 +271,8 @@ export default function Lancar() {
           id: Crypto.randomUUID(),
           seriesId: null,
           settlesDate: null,
-          date: dayKey(new Date()),
+          date,
+          time: time_,
           recordedAt: new Date().toISOString(),
           amountCents: cents,
           direction,
@@ -370,6 +413,37 @@ export default function Lancar() {
             ) : null}
           </Reveal>
         ) : null}
+
+        {/*
+          When, not just what. Absent until now this screen assumed every lançamento happened the
+          instant it was typed — true for most, wrong for the receipt found at the bottom of a bag
+          three days later. `date` may only ever look backward: an entry is something that already
+          happened, and letting it point forward would make it indistinguishable from a projection.
+
+          Locked to hoje the moment a settlement is chosen above — see the effect that enforces it —
+          because `settleOccurrence` is dated today by contract, and a field the owner could still
+          turn would be lying about what Salvar is about to write.
+        */}
+        <Reveal index={2} {...ENTER} rise={0}>
+          <Txt variant="micro" f="sansMedium" t="muted" style={styles.groupLabel}>
+            QUANDO
+          </Txt>
+          {!settles ? (
+            <DateSection date={date} today={today} onChange={setDate} />
+          ) : null}
+          <Field
+            label="Hora (opcional)"
+            value={time}
+            onChangeText={onTimeChange}
+            onBlur={() => setTimeTouched(true)}
+            error={timeTouched && !timeValid ? 'Use o formato HH:MM.' : null}
+            placeholder="--:--"
+            keyboardType="number-pad"
+            maxLength={5}
+            numeric
+            trailing={{ label: 'Agora', onPress: () => setTime(format(new Date(), 'HH:mm')) }}
+          />
+        </Reveal>
 
         <Reveal index={3} {...ENTER} rise={0}>
           <Txt variant="micro" f="sansMedium" t="muted" style={styles.groupLabel}>
@@ -573,6 +647,111 @@ function Chip({
   );
 }
 
+const WEEKDAYS = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB', 'DOM'];
+
+/**
+ * Hoje, ontem, or a day reached through the same month grid `calendario` reads with — chosen here
+ * rather than typed, because a date typed digit by digit is four chances to write the wrong year.
+ *
+ * The grid never opens past today: every cell after it is disabled the same way a chevron past
+ * `max` already is on the calendar screen, which is what keeps "a fact about the world" from ever
+ * pointing at a day that has not happened yet.
+ */
+function DateSection({
+  date,
+  today,
+  onChange,
+}: {
+  date: string;
+  today: string;
+  onChange: (date: string) => void;
+}) {
+  const yesterday = useMemo(() => dayKey(addDays(parseDay(today), -1)), [today]);
+  const isOther = date !== today && date !== yesterday;
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState(() => dayKey(startOfMonth(parseDay(date))));
+  // However far back a backdate reasonably reaches — generous, and only a scroll limit, never a
+  // rule about the ledger's actual history.
+  const min = useMemo(() => dayKey(startOfMonth(subMonths(parseDay(today), 24))), [today]);
+
+  const pick = (next: string) => {
+    onChange(next);
+    setOpen(false);
+  };
+
+  const grid = useMemo(() => {
+    const monthStart = startOfMonth(parseDay(anchor));
+    const from = dayKey(monthStart);
+    const to = dayKey(endOfMonth(monthStart));
+    const first = startOfWeek(monthStart, { weekStartsOn: 1 });
+    const last = endOfWeek(parseDay(to), { weekStartsOn: 1 });
+    const cells: string[] = [];
+    for (let cursor = first; cursor <= last; cursor = addDays(cursor, 1)) cells.push(dayKey(cursor));
+    const era: 'past' | 'current' | 'future' = to < today ? 'past' : from > today ? 'future' : 'current';
+    return { cells, from, to, era };
+  }, [anchor, today]);
+
+  return (
+    <View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chips}
+      >
+        <Chip label="Hoje" selected={date === today} onPress={() => pick(today)} />
+        <Chip label="Ontem" selected={date === yesterday} onPress={() => pick(yesterday)} />
+        <Chip
+          label={isOther ? format(parseDay(date), "d 'de' MMM", { locale: ptBR }) : 'Escolher data'}
+          selected={isOther}
+          onPress={() => {
+            setAnchor(dayKey(startOfMonth(parseDay(date))));
+            setOpen((o) => !o);
+          }}
+        />
+      </ScrollView>
+
+      {open ? (
+        <Animated.View entering={FadeIn.duration(duration.state)} style={styles.dateGrid}>
+          <MonthStepper anchor={anchor} today={today} era={grid.era} min={min} max={today} onChange={setAnchor} />
+
+          <View style={styles.weekdays} accessibilityElementsHidden>
+            {WEEKDAYS.map((d) => (
+              <Txt key={d} variant="micro" t="faint" style={styles.weekday}>
+                {d}
+              </Txt>
+            ))}
+          </View>
+
+          <View style={styles.dayGrid}>
+            {grid.cells.map((cell) => {
+              const inside = cell >= grid.from && cell <= grid.to && cell <= today;
+              const current = cell === date;
+              return (
+                <Press
+                  key={cell}
+                  onPress={() => pick(cell)}
+                  disabled={!inside}
+                  haptic="light"
+                  scale={0.96}
+                  dim={0.7}
+                  outerStyle={styles.dayHit}
+                  style={[styles.day, current ? styles.daySelected : null, !inside ? styles.dayOutside : null]}
+                  accessibilityLabel={format(parseDay(cell), "d 'de' MMMM", { locale: ptBR })}
+                  accessibilityState={{ selected: current, disabled: !inside }}
+                >
+                  <Txt variant="label" f={current ? 'monoMedium' : 'mono'} t={inside ? 'ink' : 'faint'} tabular>
+                    {format(parseDay(cell), 'd')}
+                  </Txt>
+                </Press>
+              );
+            })}
+          </View>
+        </Animated.View>
+      ) : null}
+    </View>
+  );
+}
+
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'del'] as const;
 
 function Keypad({
@@ -613,6 +792,16 @@ function Keypad({
 
 const styles = StyleSheet.create({
   settleNote: { paddingTop: space.xs },
+  // Same geometry `calendario` reads a month in, at the scale a form section gets rather than a
+  // whole screen — one grammar for "pick a day" wherever the app asks it.
+  dateGrid: { paddingTop: space.sm },
+  weekdays: { flexDirection: 'row', paddingTop: space.sm },
+  weekday: { flex: 1, textAlign: 'center', letterSpacing: 0.35 },
+  dayGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingTop: space.xs },
+  dayHit: { width: '14.2857%' },
+  day: { minHeight: 48, alignItems: 'center', justifyContent: 'center', marginVertical: 1 },
+  daySelected: { backgroundColor: color.surface },
+  dayOutside: { opacity: 0 },
   capWarn: { paddingTop: space.md },
   // The warning hangs off a rule of its own so it reads as a consequence of the choice above it
   // rather than as a caption belonging to the chip row.

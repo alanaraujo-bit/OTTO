@@ -36,6 +36,9 @@ type CalendarItem = {
   state: DayState;
   kind: SeriesKind | 'entry';
   installment: { n: number; of: number } | null;
+  /** The hour the owner gave this lançamento. Null on every projection — nothing has an hour until
+      it has happened. */
+  time: string | null;
 };
 
 type CalendarDay = {
@@ -74,6 +77,7 @@ function calendarDays(
       state: 'settled',
       kind: rule?.kind ?? 'entry',
       installment: null,
+      time: entry.time,
     });
   }
 
@@ -93,6 +97,7 @@ function calendarDays(
       state: occurrence.date <= today ? 'pending' : 'forecast',
       kind: occurrence.kind,
       installment: occurrence.installment,
+      time: null,
     });
   }
 
@@ -302,7 +307,7 @@ function Legend({ color: tint, label }: { color: string; label: string }) {
 
 function DayItemRow({ item }: { item: CalendarItem }) {
   const state = item.state === 'settled'
-    ? 'lançado'
+    ? 'lançado' + (item.time ? ' · ' + item.time : '')
     : item.state === 'pending'
       ? 'dívida pendente'
       : item.kind === 'debt'
