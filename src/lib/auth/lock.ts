@@ -1,4 +1,4 @@
-import * as SecureStore from 'expo-secure-store';
+import * as SecureStore from '@/lib/secure-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { create } from 'zustand';
 

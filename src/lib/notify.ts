@@ -1,6 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
-import * as SecureStore from 'expo-secure-store';
+import * as SecureStore from '@/lib/secure-storage';
 import { Platform } from 'react-native';
 import { parseDay } from '@/domain/projection';
 import type { Alert, AlertKind } from '@/domain/alerts';
