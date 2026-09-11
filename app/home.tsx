@@ -70,6 +70,7 @@ function HomeBody() {
   const entries = useLedger((s) => s.entries);
   const caps = useLedger((s) => s.caps);
   const storedCategories = useLedger((s) => s.categories);
+  const deferrals = useLedger((s) => s.deferralsBySlot);
 
   const [plotWidth, setPlotWidth] = useState(0);
 
@@ -102,7 +103,7 @@ function HomeBody() {
   const view = useMemo(() => {
     if (!ready || error) return null;
 
-    const curve = monthCurve(accounts, entries, series, today, anchor);
+    const curve = monthCurve(accounts, entries, series, today, deferrals, anchor);
     const t = parseDay(today);
 
     // Spend is read over a rolling window in the current month and over the month itself in a closed
@@ -161,11 +162,11 @@ function HomeBody() {
     // list restating itself.
     const slice: { label: string; items: DayItem[] } | null =
       curve.era === 'current'
-        ? { label: 'hoje', items: dayItems(entries, series, today, today) }
+        ? { label: 'hoje', items: dayItems(entries, series, today, today, deferrals) }
         : curve.era === 'future'
           ? {
               label: 'compromissos do mês',
-              items: project(series, curve.from, curve.to, settled(entries))
+              items: project(series, curve.from, curve.to, settled(entries), deferrals)
                 .filter((o) => o.direction === 'out')
                 .slice(0, 6)
                 .map((o) => ({
@@ -174,6 +175,7 @@ function HomeBody() {
                   amountCents: o.amountCents,
                   direction: o.direction,
                   settled: false,
+                  overdue: false,
                   occurrence: { seriesId: o.seriesId, scheduled: o.date, accountId: o.accountId },
                 })),
             }
@@ -195,7 +197,7 @@ function HomeBody() {
       net,
       debts: debtStatus(series),
     };
-  }, [ready, error, accounts, entries, series, caps, storedCategories, today, anchor]);
+  }, [ready, error, accounts, entries, series, caps, storedCategories, deferrals, today, anchor]);
 
   const onPlot = (e: LayoutChangeEvent) => {
     const w = Math.round(e.nativeEvent.layout.width);
@@ -444,9 +446,17 @@ function DayRows({ items }: { items: DayItem[] }) {
             <Txt variant="body" t="ink" numberOfLines={1}>
               {it.title}
             </Txt>
-            <Txt variant="micro" t="faint" numberOfLines={1}>
+            <Txt variant="micro" t={it.overdue ? 'warning' : 'faint'} numberOfLines={1}>
               {it.category}
-              {it.settled ? '' : ' · previsto'}
+              {/* Late is not the same news as expected. And an inflow that never arrived is not
+                  overdue in the owner's sense — nobody owes it to themselves. */}
+              {it.settled
+                ? ''
+                : it.overdue
+                  ? it.direction === 'in'
+                    ? ' · não recebido'
+                    : ' · vencido'
+                  : ' · previsto'}
             </Txt>
           </View>
           <Amount

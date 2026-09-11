@@ -1,5 +1,5 @@
 import { api, OfflineError } from '@/lib/api';
-import type { Account, Entry, Series } from '@/domain/model';
+import type { Account, Deferral, Entry, Series } from '@/domain/model';
 import type { Cap } from '@/domain/cap';
 import type { Category } from '@/domain/category';
 
@@ -29,6 +29,14 @@ export interface Ledger {
    * Optional on the way in for the same reason `caps` is.
    */
   categories: Category[];
+  /**
+   * Occurrences the owner has pushed to a later day, by `(seriesId, month)`.
+   *
+   * Optional on the way in for the same reason `caps` and `categories` are: a build older than this
+   * field PUTs a document without it, and must not have its whole ledger rejected — or, worse, its
+   * deferrals silently dropped — over something it does not know about.
+   */
+  deferrals: Deferral[];
 }
 
 /** Railway PostgreSQL is the sole durable store. The device never writes financial rows locally. */
@@ -36,7 +44,12 @@ export async function readLedger(): Promise<Ledger> {
   const ledger = await api<Ledger>('/v1/ledger');
   // A server that has not been redeployed yet simply has nothing to say about caps. Absent and
   // empty are the same thing for a ceiling, which is the one place a default is safe here.
-  return { ...ledger, caps: ledger.caps ?? [], categories: ledger.categories ?? [] };
+  return {
+    ...ledger,
+    caps: ledger.caps ?? [],
+    categories: ledger.categories ?? [],
+    deferrals: ledger.deferrals ?? [],
+  };
 }
 
 async function writeLedger(ledger: Ledger): Promise<void> {
@@ -134,7 +147,41 @@ export async function deleteSeries(id: string): Promise<void> {
     // A settlement whose rule is gone is still money that moved, but it no longer settles anything:
     // leaving `settlesDate` behind would keep a key pointing at a series that cannot produce it.
     entries: ledger.entries.map((item) => item.seriesId === id ? { ...item, seriesId: null, settlesDate: null } : item),
+    // A deferral is a statement about an occurrence of this rule, so it dies with the rule. Left
+    // behind it would be worse than orphaned: recreating a series under the same id would resurrect
+    // occurrences moved by a decision the owner made about something they deleted.
+    deferrals: ledger.deferrals.filter((item) => item.seriesId !== id),
   }));
+}
+
+/**
+ * Push one occurrence to a later day, or put it back where the rule always said it was.
+ *
+ * Written as a replace keyed by `(seriesId, month)` rather than an append, which is what makes it
+ * idempotent and therefore safe under `change`'s retry — see that function's note. It is also what
+ * makes deferring twice mean "it moved again" rather than "it moved twice": the occurrence has one
+ * landing day at a time, and its identity is the month it was always due in.
+ *
+ * `to` of null lifts the deferral. A day at or before the original is refused the same way, in
+ * `landsOn` — this only has the month, so it cannot compare here, and one place deciding it is
+ * better than two that might disagree.
+ */
+export async function deferOccurrence(
+  seriesId: string,
+  month: string,
+  to: string | null,
+): Promise<void> {
+  await change((ledger) => {
+    const rest = ledger.deferrals.filter(
+      (item) => !(item.seriesId === seriesId && item.month === month),
+    );
+    return {
+      ...ledger,
+      deferrals: to
+        ? [...rest, { seriesId, month, to, recordedAt: new Date().toISOString() }]
+        : rest,
+    };
+  });
 }
 
 export async function insertEntry(entry: Entry): Promise<void> {

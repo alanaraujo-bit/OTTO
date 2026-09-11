@@ -62,6 +62,7 @@ export default function Lancar() {
   const series = useLedger((s) => s.series);
   const caps = useLedger((s) => s.caps);
   const storedCategories = useLedger((s) => s.categories);
+  const deferrals = useLedger((s) => s.deferralsBySlot);
   const today = useMemo(() => dayKey(new Date()), []);
   const load = useLedger((s) => s.load);
 
@@ -153,6 +154,39 @@ export default function Lancar() {
     [entries, series, storedCategories],
   );
 
+  /*
+   * A category is never "created" in this app — see `domain/category`'s own note: it exists the
+   * moment something is recorded under its name, dressed automatically from the name itself. This
+   * is only the chip list catching up to that truth. A name typed here that Salvar has not written
+   * yet has nowhere to come from in `pickerOrder`, so it is held here just long enough to render its
+   * own chip, selected, until the entry that makes it real is saved.
+   */
+  const [newCategory, setNewCategory] = useState<string | null>(null);
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [categoryDraft, setCategoryDraft] = useState('');
+
+  const categoryOptions = useMemo(() => {
+    if (!newCategory) return categories;
+    const key = newCategory.trim().toLocaleLowerCase('pt-BR');
+    return categories.some((c) => c.toLocaleLowerCase('pt-BR') === key)
+      ? categories
+      : [newCategory, ...categories];
+  }, [categories, newCategory]);
+
+  const commitCategory = () => {
+    const trimmed = categoryDraft.trim();
+    setCategoryDraft('');
+    setAddingCategory(false);
+    if (!trimmed) return;
+    // Typed in a hurry, matched the way every other category comparison in this app already is: a
+    // name that only differs in case selects the one that exists rather than shadowing it with a
+    // near-duplicate chip.
+    const key = trimmed.toLocaleLowerCase('pt-BR');
+    const known = categories.find((c) => c.toLocaleLowerCase('pt-BR') === key);
+    setCategory(known ?? trimmed);
+    if (!known) setNewCategory(trimmed);
+  };
+
   /**
    * What this lançamento does to a ceiling — said before it is recorded, not after.
    *
@@ -199,8 +233,8 @@ export default function Lancar() {
     const t = parseDay(dayKey(new Date()));
     const from = dayKey(new Date(t.getFullYear(), t.getMonth(), 1));
     const to = dayKey(new Date(t.getFullYear(), t.getMonth() + 1, 0));
-    return project(series, from, to, settled(entries)).filter((o) => o.direction === direction);
-  }, [existing, series, entries, direction]);
+    return project(series, from, to, settled(entries), deferrals).filter((o) => o.direction === direction);
+  }, [existing, series, entries, deferrals, direction]);
 
   // A chosen occurrence whose direction the owner then flipped is no longer the one they meant.
   useEffect(() => {
@@ -454,7 +488,7 @@ export default function Lancar() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.chips}
           >
-            {categories.map((c) => (
+            {categoryOptions.map((c) => (
               <Chip
                 key={c}
                 label={c}
@@ -462,7 +496,36 @@ export default function Lancar() {
                 onPress={() => setCategory((prev) => (prev === c ? null : c))}
               />
             ))}
+            <Chip
+              label="+ Nova categoria"
+              selected={addingCategory}
+              onPress={() => setAddingCategory((o) => !o)}
+            />
           </ScrollView>
+
+          {/*
+            One field, one name, done — the same restraint `domain/category` argues for: no icon to
+            pick, no cor to choose, no teto to set before the lançamento this screen exists for can
+            be saved. Those are real things an owner may eventually want, and `categorias.tsx` is
+            where dressing a category already lives; asking for them here would put that toll gate
+            back in the one place this app has gone out of its way to remove it from.
+          */}
+          {addingCategory ? (
+            <Animated.View entering={FadeIn.duration(duration.state)}>
+              <Field
+                label="Nova categoria"
+                value={categoryDraft}
+                onChangeText={setCategoryDraft}
+                autoCapitalize="sentences"
+                returnKeyType="done"
+                maxLength={30}
+                autoFocus
+                onSubmitEditing={commitCategory}
+                trailing={{ label: 'Adicionar', onPress: commitCategory }}
+              />
+            </Animated.View>
+          ) : null}
+
           {/*
             Stated, never enforced. It is the owner's money and their ceiling, and a form that
             refused the lançamento would be the app deciding it knows better than the person holding

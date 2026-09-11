@@ -1,10 +1,11 @@
 import { create } from 'zustand';
 import { readLedger } from '@/db/repo';
 import { seed } from '@/db/seed';
-import type { Account, Entry, Series } from '@/domain/model';
+import type { Account, Deferral, Entry, Series } from '@/domain/model';
 import type { Cap } from '@/domain/cap';
 import type { Category } from '@/domain/category';
 import { alertsFor } from '@/domain/alerts';
+import { deferralMap } from '@/domain/deferral';
 import { dayKey } from '@/domain/projection';
 import { reschedule } from '@/lib/notify';
 
@@ -17,6 +18,16 @@ interface LedgerState {
   entries: Entry[];
   caps: Cap[];
   categories: Category[];
+  deferrals: Deferral[];
+  /**
+   * The deferrals, indexed the way the engine reads them.
+   *
+   * Held here rather than rebuilt per screen because `monthCurve` and `ledgerTape` sit on the
+   * ledger's hot path and each reaches into the projection more than once — a map rebuilt inside
+   * every render would multiply with the list. Replaced whenever the ledger is, so it can never
+   * describe a different set of rows than the arrays beside it.
+   */
+  deferralsBySlot: Map<string, Deferral>;
   load: () => Promise<void>;
   reseed: () => Promise<void>;
 }
@@ -39,11 +50,13 @@ export const useLedger = create<LedgerState>((set, get) => ({
   entries: [],
   caps: [],
   categories: [],
+  deferrals: [],
+  deferralsBySlot: new Map(),
 
   load: async () => {
     try {
       const ledger = await readLedger();
-      set({ ...ledger, ready: true, error: null });
+      set({ ...ledger, deferralsBySlot: deferralMap(ledger.deferrals), ready: true, error: null });
 
       /*
        * Anything scheduled to be said is derived from this ledger, so it is restated every time the
@@ -56,7 +69,14 @@ export const useLedger = create<LedgerState>((set, get) => ({
        * the owner has actually turned alerts on — `reschedule` checks the capability first.
        */
       void reschedule(
-        alertsFor(ledger.accounts, ledger.entries, ledger.series, dayKey(new Date()), ledger.caps),
+        alertsFor(
+          ledger.accounts,
+          ledger.entries,
+          ledger.series,
+          dayKey(new Date()),
+          deferralMap(ledger.deferrals),
+          ledger.caps,
+        ),
       )
         .catch(() => {
           // A scheduler that will not answer must never take the ledger down with it.

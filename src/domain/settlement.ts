@@ -1,3 +1,4 @@
+import { parseISO, startOfMonth } from 'date-fns';
 import type { Entry, Occurrence, Series } from './model';
 import type { Cents } from './money';
 
@@ -56,17 +57,30 @@ export function settled(entries: Entry[]): Set<string> {
  * count of the ones that are only *claimed*. `untracked` is that gap, and it is not an error state
  * — it is the ordinary case for a debt that existed before OTTO did.
  *
- * **Numbering is ordinal, not calendar.** The obvious implementation measures each payment's
- * distance in months from `startDate` — the way `elapsedInstallments` numbers a projected
- * occurrence — and it is wrong here, because `startDate` on a debt is *derived*, not remembered.
- * `recorrencia.tsx` recomputes it from `paidCount` on every save, so an owner who skips a month and
- * later edits an unrelated field slides the start forward. Calendar numbering then reads two
- * genuine payments as the same installment: verified, and it produced `[1, 1]`.
+ * **Numbering is by calendar identity, with an ordinal floor.**
  *
- * The order in which payments were settled cannot slide. So the k-th oldest known payment is
- * installment `untracked + k` — untracked ones being the earliest by construction, since
- * "parcelas já pagas" is what the owner declares about the beginning of a debt. Numbers are unique
- * by that arithmetic alone, which no later edit can disturb.
+ * This used to be purely ordinal — the k-th oldest known payment was installment `untracked + k` —
+ * and the argument for it was that `startDate` could not be trusted, because `recorrencia.tsx`
+ * recomputed it from `paidCount` on every save and so slid forward whenever a month was skipped.
+ * That argument has been retired at its source: the start date is now written once, when the debt is
+ * created, and never recomputed. See the note on `startDateFor`.
+ *
+ * The reason it had to be retired is that ordinal numbering cannot survive a payment made out of
+ * order, and deferral exists precisely to create them. Verified before this change: a debt with six
+ * installments declared, parcela 7 deferred into November, November's own parcela 8 paid first —
+ * ordinal numbering labelled it **7**. It self-corrected only once both were settled, which is no
+ * comfort at the moment the owner is looking at the receipt for the one they just paid.
+ *
+ * So a payment's number now comes from its own scheduled month, exactly as a projected occurrence's
+ * does, and the two agree by construction rather than by coincidence. `untracked` remains the floor:
+ * installments declared without a record are the earliest by definition, since "parcelas já pagas"
+ * is a statement about the beginning of a debt.
+ *
+ * **The floor also guarantees uniqueness.** Rows written before the start date was frozen can still
+ * carry a slid `startDate`, and a legacy row with no `settlesDate` falls back to the day it was
+ * paid — either can put two payments in one month and ask for one number twice. Assigning in
+ * scheduled order and never letting a number repeat the one before it keeps calendar numbering
+ * wherever the data supports it and degrades to ordinal exactly where it does not.
  */
 export interface DebtPayment {
   /** Which installment this settles, 1-based. */
@@ -104,18 +118,45 @@ export function numbered(
   known: Omit<DebtPayment, 'n'>[],
   paidCount: number,
   totalCount: number,
+  /**
+   * The debt's first installment month. Required rather than optional: a default would silently
+   * restore ordinal numbering for whichever caller forgot it, and the whole guarantee here is that
+   * the app and the shared link number one payment identically.
+   */
+  startDate: string,
 ): DebtHistory {
   const untracked = Math.max(0, paidCount - known.length);
 
-  const payments = known
-    // Oldest first to assign, newest first to return. Ties on the scheduled day are broken by the
-    // day the money moved, so the order is total and two payments never contend for one number.
+  // Oldest first to assign, newest first to return. Ties on the scheduled day are broken by the day
+  // the money moved, so the order is total and two payments never contend for one number.
+  const ordered = known
     .slice()
-    .sort((a, b) => a.scheduled.localeCompare(b.scheduled) || a.paid.localeCompare(b.paid))
-    .map((p, i) => ({ ...p, n: Math.min(untracked + i + 1, totalCount) }))
+    .sort((a, b) => a.scheduled.localeCompare(b.scheduled) || a.paid.localeCompare(b.paid));
+
+  let previous = untracked;
+  const payments = ordered
+    .map((p) => {
+      const n = Math.max(installmentOf(p.scheduled, startDate), previous + 1);
+      previous = n;
+      return { ...p, n: Math.min(n, totalCount) };
+    })
     .reverse();
 
   return { payments, untracked };
+}
+
+/**
+ * Which installment a scheduled day is, 1-based: the number of months from the debt's first one.
+ *
+ * The same arithmetic `elapsedInstallments` uses to number a projected occurrence, kept here in the
+ * terms a recorded payment arrives in. Both must produce one number for one installment — the app,
+ * the shared link and the projection all read it — and the only way to guarantee that is for the
+ * number to be a function of the month and nothing else.
+ */
+function installmentOf(scheduled: string, startDate: string): number {
+  const start = startOfMonth(parseISO(startDate));
+  const at = startOfMonth(parseISO(scheduled));
+  return (at.getFullYear() - start.getFullYear()) * 12 + (at.getMonth() - start.getMonth()) + 1;
 }
 
 export function debtHistory(series: Series, entries: Entry[]): DebtHistory {
@@ -128,5 +169,5 @@ export function debtHistory(series: Series, entries: Entry[]): DebtHistory {
       amountCents: e.amountCents,
     }));
 
-  return numbered(known, series.paidCount, series.totalCount ?? known.length);
+  return numbered(known, series.paidCount, series.totalCount ?? known.length, series.startDate);
 }

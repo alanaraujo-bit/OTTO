@@ -39,14 +39,15 @@ function NotificationBody() {
   const accounts = useLedger((state) => state.accounts);
   const entries = useLedger((state) => state.entries);
   const series = useLedger((state) => state.series);
+  const deferrals = useLedger((state) => state.deferralsBySlot);
   const [settings, setSettings] = useState<NotificationSettings>({ enabled: false, level: 'essential' });
   const [available, setAvailable] = useState<Capability>('unknown');
   const [queued, setQueued] = useState(0);
   const [busy, setBusy] = useState(false);
 
   const alerts = useMemo(
-    () => alertsFor(accounts, entries, series, dayKey(new Date())),
-    [accounts, entries, series],
+    () => alertsFor(accounts, entries, series, dayKey(new Date()), deferrals),
+    [accounts, entries, series, deferrals],
   );
 
   const refresh = useCallback(async () => {

@@ -156,6 +156,23 @@ function ledger(value) {
       names.add(name.toLowerCase());
     }
   }
+  if (value.deferrals != null) {
+    if (!Array.isArray(value.deferrals) || value.deferrals.length > 2000) return null;
+    const slots = new Set();
+    for (const item of value.deferrals) {
+      const seriesId = text(item.seriesId, 80);
+      if (!seriesId) return null;
+      // The month is the occurrence's identity; the day it moved to is where it landed.
+      if (!/^\d{4}-\d{2}$/.test(item.month)) return null;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(item.to)) return null;
+      if (!text(item.recordedAt, 40)) return null;
+      const slot = `${seriesId}@${item.month}`;
+      // One landing day per occurrence. Two rows for one slot is not a conflict to resolve later —
+      // it is one parcela rendering as two, so it is refused at the door.
+      if (slots.has(slot)) return null;
+      slots.add(slot);
+    }
+  }
   return value;
 }
 
@@ -243,6 +260,21 @@ async function migrate() {
       description TEXT,
       PRIMARY KEY (user_id, name)
     );
+    -- One occurrence pushed to a later day, addressed by the month it was always due in.
+    --
+    -- Deliberately no foreign key to series. Every PUT replaces the whole ledger, and that starts
+    -- by deleting every series row the owner has: a REFERENCES ... ON DELETE CASCADE here would
+    -- take all of their deferrals with it on every single write, and a client too old to send the
+    -- deferrals key back would never restore them. The client drops these when a series is deleted;
+    -- see deleteSeries in src/db/repo.ts.
+    CREATE TABLE IF NOT EXISTS deferrals (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      series_id TEXT NOT NULL,
+      month TEXT NOT NULL,
+      moved_to DATE NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (user_id, series_id, month)
+    );
     CREATE INDEX IF NOT EXISTS entries_by_owner_date ON entries (user_id, date);
     CREATE INDEX IF NOT EXISTS series_by_owner_day ON series (user_id, day_of_month);
     CREATE UNIQUE INDEX IF NOT EXISTS one_active_share_per_debt
@@ -252,7 +284,7 @@ async function migrate() {
 }
 
 async function readLedger(userId) {
-  const [accounts, series, entries, caps, categories] = await Promise.all([
+  const [accounts, series, entries, caps, categories, deferrals] = await Promise.all([
     pool.query('SELECT id, name, kind, opening_cents AS "openingCents", closing_day AS "closingDay", due_day AS "dueDay", limit_cents AS "limitCents" FROM accounts WHERE user_id = $1 ORDER BY name', [userId]),
     pool.query(`
       SELECT local.id,
@@ -281,9 +313,10 @@ async function readLedger(userId) {
     pool.query('SELECT id, series_id AS "seriesId", to_char(settles_date, \'YYYY-MM-DD\') AS "settlesDate", recorded_at AS "recordedAt", to_char(date, \'YYYY-MM-DD\') AS date, "time", amount_cents AS "amountCents", direction, title, category, account_id AS "accountId" FROM entries WHERE user_id = $1 ORDER BY date', [userId]),
     pool.query('SELECT category, cap_cents AS "capCents" FROM category_caps WHERE user_id = $1 ORDER BY category', [userId]),
     pool.query('SELECT name, icon, hue, description FROM categories WHERE user_id = $1 ORDER BY name', [userId]),
+    pool.query('SELECT series_id AS "seriesId", month, to_char(moved_to, \'YYYY-MM-DD\') AS "to", recorded_at AS "recordedAt" FROM deferrals WHERE user_id = $1 ORDER BY series_id, month', [userId]),
   ]);
   const normalize = (row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'string' && /^-?\d+$/.test(value) && ['openingCents', 'limitCents', 'amountCents', 'capCents'].includes(key) ? Number(value) : value]));
-  return { accounts: accounts.rows.map(normalize), series: series.rows.map(normalize), entries: entries.rows.map(normalize), caps: caps.rows.map(normalize), categories: categories.rows.map(normalize) };
+  return { accounts: accounts.rows.map(normalize), series: series.rows.map(normalize), entries: entries.rows.map(normalize), caps: caps.rows.map(normalize), categories: categories.rows.map(normalize), deferrals: deferrals.rows.map(normalize) };
 }
 
 async function replaceLedger(userId, next) {
@@ -332,6 +365,13 @@ async function replaceLedger(userId, next) {
     if (Array.isArray(next.categories)) {
       await client.query('DELETE FROM categories WHERE user_id = $1', [userId]);
       for (const item of next.categories) await client.query('INSERT INTO categories (user_id,name,icon,hue,description) VALUES ($1,$2,$3,$4,$5)', [userId, item.name, item.icon, item.hue, item.description ?? null]);
+    }
+    // Absent is not empty here for the same reason it is not for caps and categories, and the cost
+    // of getting it wrong is higher: wiping these would put every deferred bill back on the day the
+    // owner deliberately moved it off, which reads as the app undoing a decision by itself.
+    if (Array.isArray(next.deferrals)) {
+      await client.query('DELETE FROM deferrals WHERE user_id = $1', [userId]);
+      for (const item of next.deferrals) await client.query('INSERT INTO deferrals (user_id,series_id,month,moved_to,recorded_at) VALUES ($1,$2,$3,$4,$5)', [userId, item.seriesId, item.month, item.to, item.recordedAt]);
     }
     await client.query('COMMIT');
   } catch (error) { await client.query('ROLLBACK'); throw error; }

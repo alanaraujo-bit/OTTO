@@ -55,6 +55,9 @@ export function historyOf(debt: PublicDebtShare): DebtHistory {
     })),
     debt.paidCount,
     debt.totalCount,
+    // Already in the public payload, so the reader on the web numbers a payment with the same
+    // arithmetic the owner's app does — without the payload ever having to carry a deferral.
+    debt.startDate,
   );
 }
 

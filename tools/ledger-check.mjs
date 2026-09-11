@@ -9,19 +9,46 @@
 import assert from 'node:assert/strict';
 import {
   occurrences,
-  project,
+  project as projectWith,
   balanceToday,
-  monthCurve,
+  monthCurve as monthCurveWith,
   spendByCategory,
   debtStatus,
-  upcoming,
-  dayItems,
+  upcoming as upcomingWith,
+  dayItems as dayItemsWith,
   dayKey,
   parseDay,
-  ledgerTape,
-  nextOpen,
+  ledgerTape as ledgerTapeWith,
+  nextOpen as nextOpenWith,
+  overdue,
 } from '../src/domain/projection.ts';
-import { settled, occurrenceKey } from '../src/domain/settlement.ts';
+import { settled, occurrenceKey, numbered, debtHistory } from '../src/domain/settlement.ts';
+import { NO_DEFERRALS, deferralMap } from '../src/domain/deferral.ts';
+
+/*
+ * The engine takes the deferrals explicitly — deliberately, so that no caller can forget them and
+ * quietly bill an occurrence on a day the owner moved it off.
+ *
+ * Almost every check below was written to describe the engine with nothing deferred, and that is
+ * still exactly what it should describe. Saying so once here beats threading an empty map through
+ * ninety call sites and burying what each check is actually about. The deferral checks at the end
+ * call the `...With` functions directly and pass a real map.
+ */
+const project = (series, from, to, done) => projectWith(series, from, to, done, NO_DEFERRALS);
+const monthCurve = (accounts, entries, series, today, anchor) =>
+  monthCurveWith(accounts, entries, series, today, NO_DEFERRALS, anchor);
+const upcoming = (series, entries, today, days) =>
+  upcomingWith(series, entries, today, NO_DEFERRALS, days);
+const dayItems = (entries, series, day, today) =>
+  dayItemsWith(entries, series, day, today, NO_DEFERRALS);
+const ledgerTape = (accounts, entries, series, today, from, to) =>
+  ledgerTapeWith(accounts, entries, series, today, from, to, NO_DEFERRALS);
+const nextOpen = (series, entries, today, months) =>
+  nextOpenWith(series, entries, today, NO_DEFERRALS, months);
+const alertsFor = (accounts, entries, series, today, caps) =>
+  alertsForWith(accounts, entries, series, today, NO_DEFERRALS, caps);
+const monthClose = (accounts, entries, series, today) =>
+  monthCloseWith(accounts, entries, series, today, NO_DEFERRALS);
 import {
   monthlySpend,
   median,
@@ -31,7 +58,7 @@ import {
 import { statementCycle, statementTotal, limitUse } from '../src/domain/card.ts';
 import { commitments, commitmentFor } from '../src/domain/commitments.ts';
 import { paymentSeries, isSpend } from '../src/domain/spend.ts';
-import { alertsFor, monthClose } from '../src/domain/alerts.ts';
+import { alertsFor as alertsForWith, monthClose as monthCloseWith } from '../src/domain/alerts.ts';
 import { capReading, capReadings } from '../src/domain/cap.ts';
 import { startOfMonth, subMonths } from 'date-fns';
 import {
@@ -128,9 +155,64 @@ check('a debt stops at its installment count', () => {
   );
 });
 
-check('a fully paid debt projects nothing', () => {
-  const d = monthly({ kind: 'debt', totalCount: 3, paidCount: 3 });
-  assert.equal(occurrences(d, '2026-01-01', '2026-12-31').length, 0);
+check('uma divida quitada nao projeta nada — por liquidacao, nao por contador', () => {
+  const d = monthly({ kind: 'debt', totalCount: 3, paidCount: 3, startDate: '2026-01-01' });
+
+  // `occurrences` is the raw calendar expansion: a debt of three installments has three, and how
+  // many of them are done is not a question it answers. That is deliberate — `paidCount` reaching
+  // the total no longer suppresses the walk, because a deferred installment can leave the counter
+  // full while one identity is still owed.
+  assert.equal(occurrences(d, '2026-01-01', '2026-12-31').length, 3);
+
+  // Settlement is what removes them, addressed by identity.
+  const paid = [
+    entry({ id: 'a', seriesId: 's', settlesDate: '2026-01-10', date: '2026-01-10' }),
+    entry({ id: 'b', seriesId: 's', settlesDate: '2026-02-10', date: '2026-02-10' }),
+    entry({ id: 'c', seriesId: 's', settlesDate: '2026-03-10', date: '2026-03-10' }),
+  ];
+  assert.equal(project([d], '2026-01-01', '2026-12-31', settled(paid)).length, 0);
+});
+
+check('a parcela nao paga sobrevive ao contador cheio', () => {
+  /*
+   * The trapdoor this replaced: defer parcela 7, pay all the others, and `paidCount` reaches the
+   * total while identity 7 was never settled. The old early return made the series project nothing,
+   * so the one installment still owed vanished from every screen.
+   */
+  const d = monthly({ kind: 'debt', totalCount: 3, paidCount: 3, startDate: '2026-01-01' });
+  const allButTheFirst = [
+    entry({ id: 'b', seriesId: 's', settlesDate: '2026-02-10', date: '2026-02-10' }),
+    entry({ id: 'c', seriesId: 's', settlesDate: '2026-03-10', date: '2026-03-10' }),
+  ];
+  const open = project([d], '2026-01-01', '2026-12-31', settled(allButTheFirst));
+  assert.equal(open.length, 1, 'a que nunca foi liquidada continua devida');
+  assert.equal(open[0].date, '2026-01-10');
+  assert.equal(open[0].installment.n, 1);
+});
+
+check('parcelas declaradas pagas caem antes do primeiro mes projetado', () => {
+  /*
+   * `paidCount` no longer suppresses anything, so installments the owner merely *declared* paid —
+   * the ones with no entry behind them — are not filtered by `project`. What keeps them off every
+   * screen is where they sit: `startDateFor` anchors the debt so that installment `paidCount + 1`
+   * is the month it was created in, which puts every declared one strictly in the past. Since each
+   * window in the app runs from the current month forward, none of them is ever reachable.
+   */
+  const created = '2026-09-15';
+  const d = monthly({
+    kind: 'debt',
+    totalCount: 24,
+    paidCount: 6,
+    dayOfMonth: 8,
+    // What `startDateFor` produces: six months back from the month of creation.
+    startDate: '2026-03-01',
+  });
+  const fromThisMonth = occurrences(d, '2026-09-01', '2027-08-31');
+  assert.equal(fromThisMonth[0].installment.n, 7, 'a janela abre exatamente na primeira nao paga');
+  assert.ok(
+    occurrences(d, '2026-01-01', '2026-08-31').every((o) => o.date < created),
+    'as declaradas ficam todas atras da criacao',
+  );
 });
 
 check('installment numbering survives a window that starts mid-series', () => {
@@ -954,11 +1036,27 @@ check('um alerta nunca e agendado para o passado', () => {
   assert.ok(eve, 'still worth saying on the eve');
   assert.equal(eve.date, '2026-09-09');
 
-  // On the day itself it goes quiet, and that is the curve being honest rather than a gap. A
-  // projection is never laid over a day that has already arrived, so on the 10th the app does not
-  // know whether the rent was paid — and warning about a bill the owner may have just settled is
-  // exactly the noise this module exists to avoid.
-  assert.deepEqual(alertsFor(acc, list, series, '2026-09-10'), []);
+  /*
+   * On the day itself, and after it, the warning stands.
+   *
+   * This used to assert silence, on the argument that the app could not know whether the rent had
+   * been paid once its day arrived. That argument was true of a date boundary and is not true of
+   * identity: an entry settling the occurrence removes it, and nothing settled this one, so the
+   * rent is not "maybe paid" — it is owed and late. Going quiet there was the bug, not the manners.
+   */
+  const [onTheDay] = alertsFor(acc, list, series, '2026-09-10');
+  assert.ok(onTheDay, 'a conta venceu e nao foi paga: continua valendo o aviso');
+  assert.equal(onTheDay.date, '2026-09-10', 'datado de hoje, nunca do passado');
+  assert.ok(onTheDay.body.includes('Aluguel'), 'e ainda diz qual conta e');
+
+  // Still true two days later, and still never dated behind today.
+  const [later] = alertsFor(acc, list, series, '2026-09-12');
+  assert.equal(later.date, '2026-09-12');
+
+  // And it stops being late the moment something settles it — by identity, not by the calendar.
+  assert.equal(overdue(series, list, '2026-09-12', NO_DEFERRALS).length, 1, 'devido enquanto ninguem paga');
+  const paid = [...list, entry({ id: 'r', seriesId: 'rent', settlesDate: '2026-09-10', date: '2026-09-10', amountCents: 200000 })];
+  assert.deepEqual(overdue(series, paid, '2026-09-12', NO_DEFERRALS), [], 'pago: nao esta mais vencido');
 });
 
 check('o mergulho e anunciado uma vez, na primeira travessia', () => {
@@ -1341,6 +1439,225 @@ check('no ultimo dia do mes nao se avisa sobre um mes que acaba hoje', () => {
 check('sem teto nenhum, nada muda nos alertas de sempre', () => {
   const before = alertsFor(acc, [spentOn('2026-09-01', 24000)], [], '2026-09-05');
   assert.equal(before.filter((a) => a.kind === 'cap').length, 0);
+});
+
+
+/*
+ * Installment numbering, which is the one figure the owner reads off a receipt.
+ *
+ * The ordinal scheme these replace was verified wrong before the change: a debt with six declared,
+ * parcela 7 deferred into November and November's own parcela 8 settled first was labelled 7.
+ */
+
+const moto = {
+  ...monthly({
+    id: 'moto',
+    kind: 'debt',
+    title: 'Moto',
+    amountCents: 50000,
+    dayOfMonth: 8,
+    totalCount: 24,
+    // Six installments declared paid, so parcela 7 is the first one OTTO ever projects. The debt
+    // therefore begins six months before it: April, which puts 7 in October and 8 in November.
+    startDate: '2026-04-08',
+  }),
+  paidCount: 6,
+};
+
+const payment = (scheduled, paid) => ({
+  scheduled,
+  paid,
+  recordedAt: null,
+  amountCents: 50000,
+});
+
+check('pagar fora de ordem numera a parcela certa', () => {
+  // Parcela 7 (October) is deferred; November's own parcela 8 is paid first. This is the exact
+  // sequence that produced a 7 under the ordinal scheme.
+  const one = numbered([payment('2026-11-08', '2026-11-08')], 7, 24, moto.startDate);
+  assert.deepEqual(one.payments.map((p) => p.n), [8], 'novembro e a oitava, nao a setima');
+
+  // Then the deferred October installment is settled, late. Both keep their own numbers.
+  const two = numbered(
+    [payment('2026-11-08', '2026-11-08'), payment('2026-10-08', '2026-11-20')],
+    8,
+    24,
+    moto.startDate,
+  );
+  assert.deepEqual(
+    two.payments.map((p) => [p.scheduled, p.n]),
+    [['2026-11-08', 8], ['2026-10-08', 7]],
+    'cada parcela mantem o numero do seu proprio mes',
+  );
+  assert.equal(two.untracked, 6, 'as seis declaradas continuam sem registro');
+});
+
+check('a projecao e o historico concordam sobre o numero da parcela', () => {
+  // The same installment, reached from both directions: projected as a forecast, and read back as a
+  // recorded payment. The two must agree, or the owner sees one installment under two numbers.
+  const projected = occurrences(moto, '2026-11-01', '2026-11-30');
+  assert.equal(projected.length, 1);
+  assert.equal(projected[0].installment.n, 8, 'novembro projeta a oitava');
+
+  const recorded = numbered([payment('2026-11-08', '2026-11-08')], 7, 24, moto.startDate);
+  assert.equal(recorded.payments[0].n, projected[0].installment.n, 'projecao == historico');
+});
+
+check('o leitor da divida compartilhada numera igual ao dono', () => {
+  /*
+   * `historyOf` (src/lib/debtShare.ts) only renames the public payload's fields and calls
+   * `numbered`; it decides nothing. It cannot be imported here — the harness runs on Node's
+   * strip-only TypeScript and `lib/api.ts` uses a parameter property — so this reproduces its call
+   * with the payload's own field names. What is actually being guaranteed is that the numbering
+   * needs nothing the public payload lacks: `startDate` and each payment's `scheduled` are already
+   * in it, so a deferral never has to cross the API for the two readings to agree.
+   */
+  const publicPayload = {
+    startDate: moto.startDate,
+    totalCount: 24,
+    paidCount: 7,
+    payments: [{ scheduled: '2026-11-08', paidOn: '2026-11-08', recordedAt: null, amountCents: 50000 }],
+  };
+  const web = numbered(
+    publicPayload.payments.map((p) => ({
+      scheduled: p.scheduled,
+      paid: p.paidOn,
+      recordedAt: p.recordedAt,
+      amountCents: p.amountCents,
+    })),
+    publicPayload.paidCount,
+    publicPayload.totalCount,
+    publicPayload.startDate,
+  );
+
+  const owner = debtHistory({ ...moto, paidCount: 7 }, [
+    entry({ id: 'p8', seriesId: 'moto', settlesDate: '2026-11-08', date: '2026-11-08', amountCents: 50000 }),
+  ]);
+
+  assert.deepEqual(
+    web.payments.map((p) => p.n),
+    owner.payments.map((p) => p.n),
+    'web e app veem o mesmo numero',
+  );
+  assert.equal(owner.payments[0].n, 8);
+});
+
+check('numero da parcela e unico mesmo com startDate deslizado', () => {
+  /*
+   * Rows written before the start date was frozen can carry a slid anchor, and a legacy row with no
+   * `settlesDate` falls back to the day it was paid — either can put two payments in one month and
+   * ask for the same number twice. The ordinal floor is what stops that.
+   */
+  const slid = { ...moto, startDate: '2026-09-08' };
+  const history = debtHistory({ ...slid, paidCount: 9 }, [
+    // Three payments whose scheduled months collapse onto one another under the slid anchor.
+    entry({ id: 'a', seriesId: 'moto', settlesDate: null, date: '2026-09-03', amountCents: 50000 }),
+    entry({ id: 'b', seriesId: 'moto', settlesDate: null, date: '2026-09-19', amountCents: 50000 }),
+    entry({ id: 'c', seriesId: 'moto', settlesDate: null, date: '2026-09-27', amountCents: 50000 }),
+  ]);
+  const ns = history.payments.map((p) => p.n);
+  assert.equal(new Set(ns).size, ns.length, `numeros repetidos: ${ns.join(', ')}`);
+});
+
+
+/*
+ * The overdue window and deferral, which are one mechanism seen from two sides.
+ */
+
+check('o que venceu e nao foi pago aparece — e continua sendo cobrado', () => {
+  /*
+   * The exact case that started this: rent due on the 8th, today is the 9th, nothing paid. It used
+   * to vanish from every surface *and* from the forecast — verified before the change, the month
+   * opened, stood and closed on the same figure with R$ 1.800 of rent owed inside it.
+   */
+  const rent = monthly({ id: 'rent', title: 'Aluguel', amountCents: 180000, dayOfMonth: 8 });
+  const open = [entry({ id: 'saldo', date: '2026-09-01', amountCents: 500000, direction: 'in' })];
+  const today = '2026-09-09';
+
+  const late = overdue([rent], open, today, NO_DEFERRALS);
+  assert.equal(late.length, 1, 'a ocorrencia vencida existe');
+  assert.equal(late[0].date, '2026-09-08');
+
+  const curve = monthCurveWith(acc, open, [rent], today, NO_DEFERRALS);
+  assert.equal(curve.overdueCents, 180000, 'a tela recebe o total vencido, nomeado');
+
+  // The money has not moved, so today's balance must not pretend it has.
+  assert.equal(curve.balanceNow, 500000, 'saldo de hoje e so o que foi registrado');
+  // But the month is still on the hook for it.
+  assert.equal(curve.balanceEnd, 320000, 'o fim do mes conta o aluguel devido');
+
+  // And the tape draws the row on the day it was due while moving no balance on it.
+  const tape = ledgerTapeWith(acc, open, [rent], today, '2026-09-01', '2026-09-30', NO_DEFERRALS);
+  const day8 = tape.find((d) => d.date === '2026-09-08');
+  assert.ok(day8, 'o dia 8 aparece na fita');
+  assert.equal(day8.items.length, 1);
+  assert.equal(day8.items[0].overdue, true);
+  assert.equal(day8.moved, 0, 'uma conta nao paga nao move saldo nenhum');
+});
+
+check('adiar move a ocorrencia sem mexer na regra nem no numero', () => {
+  // Parcela 7 (8 de outubro) empurrada para 8 de novembro, onde a 8 ja cai.
+  const deferrals = deferralMap([
+    { seriesId: 'moto', month: '2026-10', to: '2026-11-08', recordedAt: '2026-10-08T12:00:00Z' },
+  ]);
+
+  // Outubro fica vazio: a ocorrencia saiu de la.
+  const october = projectWith([moto], '2026-10-01', '2026-10-31', new Set(), deferrals);
+  assert.equal(october.length, 0, 'outubro nao cobra mais nada');
+
+  // Novembro tem as duas, cada uma com o seu numero, e nessa ordem.
+  const november = projectWith([moto], '2026-11-01', '2026-11-30', new Set(), deferrals);
+  assert.deepEqual(november.map((o) => o.installment.n), [7, 8], 'a 7 adiada vem antes da 8 do mes');
+  assert.equal(november[0].date, '2026-10-08', 'a identidade da 7 continua sendo outubro');
+  assert.equal(november[0].on, '2026-11-08', 'so o dia em que ela cai mudou');
+  assert.equal(november[1].date, '2026-11-08', 'a 8 e a do proprio mes');
+
+  // A regra em si nao foi tocada: dezembro segue normal, na parcela 9.
+  const december = projectWith([moto], '2026-12-01', '2026-12-31', new Set(), deferrals);
+  assert.deepEqual(december.map((o) => o.installment.n), [9]);
+});
+
+check('pago a do mes, a adiada continua — e pode ser adiada de novo', () => {
+  const first = deferralMap([
+    { seriesId: 'moto', month: '2026-10', to: '2026-11-08', recordedAt: '2026-10-08T12:00:00Z' },
+  ]);
+
+  // Paga a parcela 8, a do proprio mes de novembro. A liquidacao e enderecada pela identidade dela.
+  const paidTheEighth = settled([
+    entry({ id: 'p8', seriesId: 'moto', settlesDate: '2026-11-08', date: '2026-11-08', amountCents: 50000 }),
+  ]);
+  const left = projectWith([moto], '2026-11-01', '2026-11-30', paidTheEighth, first);
+  assert.equal(left.length, 1, 'sobra exatamente uma');
+  assert.equal(left[0].installment.n, 7, 'e a 7, a que foi adiada — nao se perdeu');
+
+  // Adiada outra vez, agora para dezembro. A chave continua sendo outubro, que e o que permite
+  // encadear: um segundo adiamento lido pela data exibida moveria a parcela errada.
+  const second = deferralMap([
+    { seriesId: 'moto', month: '2026-10', to: '2026-12-08', recordedAt: '2026-11-08T12:00:00Z' },
+  ]);
+  const december = projectWith([moto], '2026-12-01', '2026-12-31', paidTheEighth, second);
+  assert.deepEqual(december.map((o) => o.installment.n), [7, 9], 'a 7 chega em dezembro, junto da 9');
+  assert.equal(december[0].date, '2026-10-08', 'e ainda e a de outubro');
+});
+
+check('adiar para tras nao existe: seria sumir para sempre', () => {
+  // Anything landing on or before the original day is read as absent. A bill pushed backwards into
+  // a closed month would be projected nowhere and listed as overdue nowhere.
+  const backwards = deferralMap([
+    { seriesId: 'moto', month: '2026-10', to: '2026-09-08', recordedAt: '2026-10-08T12:00:00Z' },
+  ]);
+  const october = projectWith([moto], '2026-10-01', '2026-10-31', new Set(), backwards);
+  assert.deepEqual(october.map((o) => o.installment.n), [7], 'continua em outubro, onde a regra a poe');
+});
+
+check('uma parcela adiada para o mes que vem nao esta vencida hoje', () => {
+  // Deferring is not the same as being late: the whole point is that it stops being due now.
+  const rent = monthly({ id: 'rent', title: 'Aluguel', amountCents: 180000, dayOfMonth: 8 });
+  const deferrals = deferralMap([
+    { seriesId: 'rent', month: '2026-09', to: '2026-10-08', recordedAt: '2026-09-09T10:00:00Z' },
+  ]);
+  assert.deepEqual(overdue([rent], [], '2026-09-09', deferrals), [], 'adiada nao e vencida');
+  assert.equal(overdue([rent], [], '2026-09-09', NO_DEFERRALS).length, 1, 'sem adiar, esta vencida');
 });
 
 

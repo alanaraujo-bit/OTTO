@@ -3,7 +3,7 @@ import { dayKey, monthCurve, parseDay, project } from './projection';
 import { settled } from './settlement';
 import { statementCycle, statementTotal } from './card';
 import { capReadings, type Cap } from './cap';
-import type { Account, Entry, Series } from './model';
+import type { Account, Deferral, Entry, Series } from './model';
 import { brlShort, type Cents } from './money';
 
 /**
@@ -56,8 +56,9 @@ function troughAlert(
   entries: Entry[],
   series: Series[],
   today: string,
+  deferrals: Map<string, Deferral>,
 ): Alert | null {
-  const curve = monthCurve(accounts, entries, series, today);
+  const curve = monthCurve(accounts, entries, series, today, deferrals);
   const limit = dayKey(addDays(parseDay(today), HORIZON));
 
   const crossing = curve.points.find((p) => !p.actual && p.balance < 0 && p.date <= limit);
@@ -68,9 +69,20 @@ function troughAlert(
   const eve = dayKey(addDays(parseDay(crossing.date), -1));
   const when = eve > today ? eve : today;
 
-  // What lands on the day it goes under. Naming it turns "you will be short" into something the
-  // owner can act on, and the projection already knows.
-  const cause = project(series, crossing.date, crossing.date, settled(entries))
+  /*
+   * What lands on the day it goes under. Naming it turns "you will be short" into something the
+   * owner can act on, and the projection already knows.
+   *
+   * Overdue bills are carried into the first forecast day rather than sitting on their own — see
+   * `monthCurve` — so when that is the day the month breaks, the name is in the overdue list and
+   * nowhere else. Looking only at what the projection puts on the crossing day was leaving the
+   * commonest case of all unnamed: the bill that is late is usually the bill that sinks the month.
+   */
+  const carried = dayKey(addDays(parseDay(today), 1));
+  const cause = [
+    ...project(series, crossing.date, crossing.date, settled(entries), deferrals),
+    ...(crossing.date === carried ? curve.overdue : []),
+  ]
     .filter((o) => o.direction === 'out')
     .sort((a, b) => b.amountCents - a.amountCents)[0];
 
@@ -119,9 +131,14 @@ function statementAlerts(
 }
 
 /** Tomorrow's outgoing commitments, gathered into one useful glance rather than one ping per bill. */
-function tomorrowAlert(entries: Entry[], series: Series[], today: string): Alert | null {
+function tomorrowAlert(
+  entries: Entry[],
+  series: Series[],
+  today: string,
+  deferrals: Map<string, Deferral>,
+): Alert | null {
   const date = dayKey(addDays(parseDay(today), 1));
-  const out = project(series, date, date, settled(entries))
+  const out = project(series, date, date, settled(entries), deferrals)
     .filter((item) => item.direction === 'out')
     .sort((a, b) => b.amountCents - a.amountCents);
   if (out.length === 0) return null;
@@ -207,15 +224,16 @@ export function alertsFor(
   entries: Entry[],
   series: Series[],
   today: string,
+  deferrals: Map<string, Deferral>,
   caps: Cap[] = [],
 ): Alert[] {
   const list: Alert[] = [];
 
-  const trough = troughAlert(accounts, entries, series, today);
+  const trough = troughAlert(accounts, entries, series, today, deferrals);
   if (trough) list.push(trough);
   list.push(...statementAlerts(accounts, entries, today));
   list.push(...capAlerts(caps, entries, series, today));
-  const tomorrow = tomorrowAlert(entries, series, today);
+  const tomorrow = tomorrowAlert(entries, series, today, deferrals);
   if (tomorrow) list.push(tomorrow);
 
   return list
@@ -229,8 +247,9 @@ export function monthClose(
   entries: Entry[],
   series: Series[],
   today: string,
+  deferrals: Map<string, Deferral>,
 ): { date: string; net: Cents } {
-  const curve = monthCurve(accounts, entries, series, today);
+  const curve = monthCurve(accounts, entries, series, today, deferrals);
   return {
     date: dayKey(endOfMonth(parseDay(today))),
     net: curve.balanceEnd - curve.balanceStart,

@@ -55,6 +55,7 @@ function calendarDays(
   from: string,
   to: string,
   today: string,
+  deferrals: ReturnType<typeof useLedger.getState>['deferralsBySlot'],
 ) {
   const byDate = new Map<string, CalendarItem[]>();
   const put = (date: string, item: CalendarItem) => {
@@ -84,17 +85,29 @@ function calendarDays(
   // `project` already drops anything an entry has settled, by the same key every other screen
   // uses. The check that used to live here compared `entry.date` to `occurrence.date`, which was
   // right only while nothing was ever paid early — and paying early is now a thing the app does.
-  for (const occurrence of project(series, from, to, done)) {
-    // A projection is never claimed as fact. The exception is an unpaid debt in the past: that is
-    // not a forecast anymore, it is the one pending commitment the calendar exists to surface.
-    if (occurrence.date <= today && occurrence.kind !== 'debt') continue;
-    put(occurrence.date, {
+  for (const occurrence of project(series, from, to, done, deferrals)) {
+    /*
+     * A projection is never claimed as fact, but a day that has passed with nothing settling it is
+     * not a forecast either — it is still owed, and that is the state this calendar exists to make
+     * visible.
+     *
+     * This used to admit only debts and silently drop every other kind, so a rent that went unpaid
+     * left no mark anywhere. Every kind is admitted now, inflows included: a salary that did not
+     * arrive is not a debt, but it is a promise the month is still counting on.
+     *
+     * The dashboard's overdue feed stops at the start of the current month, deliberately — see
+     * `overdue`. This does not, and the difference is not an inconsistency: that feed is a list of
+     * things to act on now, while this is a month the owner navigated to on purpose. Its window is
+     * the month on screen, so "what was still open in July" stays answerable without any list
+     * growing without bound.
+     */
+    put(occurrence.on, {
       key: keyOf(occurrence),
       title: occurrence.title,
       category: occurrence.category,
       amountCents: occurrence.amountCents,
       direction: occurrence.direction,
-      state: occurrence.date <= today ? 'pending' : 'forecast',
+      state: occurrence.on <= today ? 'pending' : 'forecast',
       kind: occurrence.kind,
       installment: occurrence.installment,
       time: null,
@@ -130,6 +143,7 @@ function CalendarioBody() {
   const load = useLedger((state) => state.load);
   const entries = useLedger((state) => state.entries);
   const series = useLedger((state) => state.series);
+  const deferrals = useLedger((state) => state.deferralsBySlot);
   const today = useMemo(() => dayKey(new Date()), []);
   const [anchor, setAnchor] = useState(today);
   const [selected, setSelected] = useState(today);
@@ -158,13 +172,13 @@ function CalendarioBody() {
     const from = dayKey(monthStart);
     const to = dayKey(endOfMonth(monthStart));
     const era: 'past' | 'current' | 'future' = to < today ? 'past' : from > today ? 'future' : 'current';
-    const days = calendarDays(entries, series, from, to, today);
+    const days = calendarDays(entries, series, from, to, today, deferrals);
     const first = startOfWeek(monthStart, { weekStartsOn: 1 });
     const last = endOfWeek(endOfMonth(monthStart), { weekStartsOn: 1 });
     const cells: string[] = [];
     for (let cursor = first; cursor <= last; cursor = addDays(cursor, 1)) cells.push(dayKey(cursor));
     return { from, to, era, days, cells };
-  }, [anchor, entries, series, today]);
+  }, [anchor, entries, series, deferrals, today]);
 
   const selectedDay = month.days.get(selected) ?? null;
 

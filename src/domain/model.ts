@@ -124,11 +124,56 @@ export interface Entry {
   accountId: string;
 }
 
+/**
+ * Postponing one occurrence, without touching the rule that produced it.
+ *
+ * The mirror image of settlement, and deliberately the same shape of fact: an entry says *this
+ * occurrence already happened*, a deferral says *this occurrence happens later*. Neither edits the
+ * series, so `dayOfMonth` keeps meaning what the owner set it to and deleting the fact restores the
+ * original day.
+ *
+ * **Identity is the month, not the day.** A monthly series has exactly one occurrence per month, so
+ * `(seriesId, month)` addresses it completely — and it keeps addressing it after the owner corrects
+ * `dayOfMonth` from the 8th to the 15th, which a day-keyed reference would not survive. It is also
+ * what the installment number falls out of: the n-th installment is the n-th month from the start,
+ * so an occurrence that keeps its month keeps its number no matter where it is pushed to.
+ *
+ * That is the whole reason this is not "move the due date": parcela 7 pushed into November is still
+ * parcela 7. Novembro then carries two, and the one that was deferred can be deferred again, because
+ * what identifies it never moved.
+ */
+export interface Deferral {
+  seriesId: string;
+  /** The occurrence's own month, `yyyy-MM`. Its identity — never changes, however often it moves. */
+  month: string;
+  /** The day it now falls on, `yyyy-MM-dd`. */
+  to: string;
+  /** When the owner deferred it, ISO-8601. Nobody edits this. */
+  recordedAt: string;
+}
+
 /** A projected event: a series' occurrence on a specific date. Never persisted. */
 export interface Occurrence {
   seriesId: string;
   kind: SeriesKind;
+  /**
+   * The day the rule puts this occurrence on — and the day it is **identified by**.
+   *
+   * This never moves. `settled()` keys off it, `settlesDate` records it, and a deferral is looked up
+   * by the month of it. A deferred occurrence displayed in November is still identified by its
+   * October date, which is what lets the owner defer it a second time without the app losing track
+   * of which installment it is. Overwriting this with the deferred day would make parcela 7, pushed
+   * into November, collide with November's own parcela 8 — one key, two occurrences, and paying
+   * either would retire both.
+   */
   date: string;
+  /**
+   * The day it actually lands on. Equal to `date` until a deferral moves it.
+   *
+   * Only day-bucketing reads this — which calendar cell it draws in, which day of the tape it sums
+   * into. Identity stays with `date`, above.
+   */
+  on: string;
   title: string;
   category: string;
   amountCents: Cents;

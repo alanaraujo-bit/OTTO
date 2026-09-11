@@ -12,12 +12,14 @@ import {
 import {
   signed,
   type Account,
+  type Deferral,
   type Direction,
   type Entry,
   type Occurrence,
   type Series,
 } from './model';
 import type { Cents } from './money';
+import { landsOn, monthOf } from './deferral';
 import { keyOf, settled } from './settlement';
 import { isSpend } from './spend';
 
@@ -38,48 +40,66 @@ export function occurrences(series: Series, from: string, to: string): Occurrenc
   const startD = parseDay(series.startDate);
   const endD = series.endDate ? parseDay(series.endDate) : null;
 
-  // A debt stops when its installments run out, whatever its end date says.
-  const remaining =
-    series.kind === 'debt' && series.totalCount != null
-      ? series.totalCount - series.paidCount
-      : null;
-  if (remaining != null && remaining <= 0) return out;
+  /*
+   * A debt stops when it runs out of *installments*, which is a fact about the calendar — not when
+   * `paidCount` reaches the total, which is a fact about progress.
+   *
+   * The two used to be the same thing, and this returned early on `paidCount >= totalCount`. Once an
+   * occurrence can be deferred they come apart, and the early return becomes a trapdoor: defer
+   * parcela 7, pay every other one, and the counter reaches 24 while identity 7 was never settled.
+   * The series would then project nothing at all — so the one installment still genuinely owed
+   * disappears from every screen, which is the exact bug this feature exists to fix, reintroduced at
+   * the tail of every debt that was ever deferred.
+   *
+   * So the count bounds the calendar (`withinCount`, below) and settlement is what removes an
+   * occurrence — `project` filters by identity against `done`. A debt whose installments are all
+   * settled emits them and has every one filtered out, which costs a walk of at most `totalCount`
+   * months and cannot lose one.
+   */
+  const finite = series.kind === 'debt' && series.totalCount != null;
 
   // Walk months from the later of the range start and the series start.
   let cursor = startOfMonth(isBefore(fromD, startD) ? startD : fromD);
   const lastMonth = startOfMonth(toD);
 
-  // How many installments have already elapsed before this cursor, so numbering stays correct
-  // regardless of where the query window begins.
-  let index = elapsedInstallments(series, cursor);
-
   while (!isAfter(cursor, lastMonth)) {
     const day = Math.min(series.dayOfMonth, getDaysInMonth(cursor));
     const when = new Date(cursor.getFullYear(), cursor.getMonth(), day);
 
+    /*
+     * Which installment this month *is*, read off the calendar rather than counted as the walk goes.
+     *
+     * The distinction only shows itself once something can be paid out of order or pushed into
+     * another month, and then it decides correctness. A counter says "the n-th one I emitted"; the
+     * calendar says "the n-th month since this debt began", which is what the installment actually
+     * is. A deferred occurrence keeps the number its own month gave it however far it is pushed —
+     * that is the whole of why parcela 7 landing in November is still parcela 7 — and a counter
+     * could not express that, because the thing it counts is emission order.
+     */
+    const elapsed = elapsedInstallments(series, cursor);
+
     const insideWindow = !isBefore(when, fromD) && !isAfter(when, toD);
     const started = !isBefore(when, startD);
     const notEnded = endD == null || !isAfter(when, endD);
-    const withinCount = remaining == null || index < (series.totalCount as number);
+    const withinCount = !finite || elapsed < (series.totalCount as number);
 
-    if (started && notEnded && withinCount) {
-      if (insideWindow) {
-        out.push({
-          seriesId: series.id,
-          kind: series.kind,
-          date: dayKey(when),
-          title: series.title,
-          category: series.category,
-          amountCents: series.amountCents,
-          direction: series.direction,
-          accountId: series.accountId,
-          installment:
-            series.kind === 'debt' && series.totalCount != null
-              ? { n: index + 1, of: series.totalCount }
-              : null,
-        });
-      }
-      index += 1;
+    if (started && notEnded && withinCount && insideWindow) {
+      out.push({
+        seriesId: series.id,
+        kind: series.kind,
+        date: dayKey(when),
+        // Identity and landing day are the same thing until something defers this occurrence.
+        on: dayKey(when),
+        title: series.title,
+        category: series.category,
+        amountCents: series.amountCents,
+        direction: series.direction,
+        accountId: series.accountId,
+        installment:
+          series.kind === 'debt' && series.totalCount != null
+            ? { n: elapsed + 1, of: series.totalCount }
+            : null,
+      });
     }
 
     cursor = addMonths(cursor, 1);
@@ -125,11 +145,65 @@ export function project(
   from: string,
   to: string,
   done: Set<string>,
+  /**
+   * What has been pushed to a later day. Required rather than defaulted, for exactly the reason
+   * `done` is: a default of "nothing was deferred" would silently bill a caller's occurrence on the
+   * day the owner moved it off, and the compiler is the only thing that reliably remembers.
+   */
+  deferrals: Map<string, Deferral>,
 ): Occurrence[] {
-  return all
-    .flatMap((s) => occurrences(s, from, to))
+  const out: Occurrence[] = [];
+
+  /*
+   * The window is asked in landing days, so the walk has to cover whole months at the edges: an
+   * occurrence due on the 8th and pushed to the 25th belongs to a window that opens on the 15th,
+   * and a walk bounded by the window itself would never produce it to be moved.
+   */
+  const scanFrom = dayKey(startOfMonth(parseDay(from)));
+  const scanTo = dayKey(endOfMonth(parseDay(to)));
+
+  for (const s of all) {
+    for (const o of occurrences(s, scanFrom, scanTo)) {
+      const on = landsOn(s.id, o.date, deferrals);
+      if (on >= from && on <= to) out.push({ ...o, on });
+    }
+  }
+
+  /*
+   * And the other direction: something due in a month the walk above did not touch, pushed forward
+   * into this window. Driven by the deferral list rather than by widening the scan — deferrals are
+   * few and explicit, while widening would make every projection pay for the rare case.
+   */
+  if (deferrals.size > 0) {
+    const firstMonth = monthOf(scanFrom);
+    const lastMonth = monthOf(scanTo);
+    const byId = new Map(all.map((s) => [s.id, s]));
+
+    for (const moved of deferrals.values()) {
+      if (moved.to < from || moved.to > to) continue;
+      // Already produced by the walk above, which covered these months in full.
+      if (moved.month >= firstMonth && moved.month <= lastMonth) continue;
+      const s = byId.get(moved.seriesId);
+      if (!s) continue;
+      const monthStart = `${moved.month}-01`;
+      for (const o of occurrences(s, monthStart, dayKey(endOfMonth(parseDay(monthStart))))) {
+        if (monthOf(o.date) === moved.month) out.push({ ...o, on: moved.to });
+      }
+    }
+  }
+
+  return out
     .filter((o) => !done.has(keyOf(o)))
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    .sort(
+      (a, b) =>
+        // Landing day first: that is the order the reader sees them in.
+        (a.on < b.on ? -1 : a.on > b.on ? 1 : 0) ||
+        // A deferred installment and the month's own one land on the same day for the same amount,
+        // so nothing above this can separate them. Their numbers can, and must: "parcela 7" and
+        // "parcela 8" swapping places between two renders is the one thing this feature cannot do.
+        (a.installment && b.installment ? a.installment.n - b.installment.n : 0) ||
+        (a.date < b.date ? -1 : a.date > b.date ? 1 : 0),
+    );
 }
 
 /**
@@ -149,13 +223,45 @@ export function nextOpen(
   series: Series,
   entries: Entry[],
   today: string,
+  deferrals: Map<string, Deferral>,
   /** How far ahead to look for an unsettled occurrence, in months. */
   months = 13,
 ): Occurrence | null {
   const t = parseDay(today);
   const from = dayKey(startOfMonth(t));
   const to = dayKey(endOfMonth(addMonths(t, months - 1)));
-  return project([series], from, to, settled(entries))[0] ?? null;
+  return project([series], from, to, settled(entries), deferrals)[0] ?? null;
+}
+
+/**
+ * What was due and nothing has settled — the bills the calendar has already gone past.
+ *
+ * The gap this closes: the engine answers a day at or before `today` from entries and every day
+ * after it from projection, so an occurrence whose day passed without being paid was neither. It
+ * did not merely stop being listed — it stopped being *owed*, and the month closed as though the
+ * rent had never existed. Verified before this was written: a R$ 1.800 rent due on the 8th, unpaid
+ * on the 9th, left `balanceStart`, `balanceNow` and `balanceEnd` all identical.
+ *
+ * **The window opens at the start of the current month and closes at today.** Not further back, and
+ * the reason is not performance: "every occurrence never settled" is unbounded, so a rule created
+ * two years ago with nothing recorded against it would arrive as a screen of overdue rows nobody
+ * can act on. It also matches where `nextOpen` already draws the line, and for the same instinct —
+ * a month that has closed is closed. The cost is real and worth naming: a bill genuinely missed in
+ * a previous month is not shown here.
+ *
+ * Inflows are included. A salary that did not arrive is not a debt, but it is a promise the
+ * forecast is still counting on, and hiding it is how a month looks fine until it isn't. The
+ * screens say it differently — "não recebido", not "vencido" — which is a matter of copy, not of
+ * arithmetic.
+ */
+export function overdue(
+  series: Series[],
+  entries: Entry[],
+  today: string,
+  deferrals: Map<string, Deferral>,
+): Occurrence[] {
+  const from = dayKey(startOfMonth(parseDay(today)));
+  return project(series, from, today, settled(entries), deferrals);
 }
 
 /**
@@ -208,6 +314,14 @@ export interface MonthCurve {
   to: string;
   /** Where this month sits relative to today. Drives what the chart is allowed to claim. */
   era: 'past' | 'current' | 'future';
+  /**
+   * What was due this month and has not been settled, and what it adds up to.
+   *
+   * Empty on any month that is not the current one: a past month's misses are not actionable from
+   * here, and a future month has nothing to be late yet. See `overdue`.
+   */
+  overdue: Occurrence[];
+  overdueCents: Cents;
 }
 
 /**
@@ -233,6 +347,7 @@ export function monthCurve(
   entries: Entry[],
   series: Series[],
   today: string,
+  deferrals: Map<string, Deferral>,
   /** Any day inside the month to read. Defaults to the month containing `today`. */
   anchor: string = today,
 ): MonthCurve {
@@ -258,12 +373,34 @@ export function monthCurve(
   const plan = new Map<string, Cents>();
   if (to > today) {
     const planFrom = from > today ? from : dayKey(addDays(todayD, 1));
-    for (const o of project(series, planFrom, to, settled(entries))) {
-      plan.set(o.date, (plan.get(o.date) ?? 0) + signed(o.amountCents, o.direction));
+    for (const o of project(series, planFrom, to, settled(entries), deferrals)) {
+      plan.set(o.on, (plan.get(o.on) ?? 0) + signed(o.amountCents, o.direction));
     }
   }
 
-  let running = openingBalance(accounts, entries, series, today, from);
+  /*
+   * What was already due and never settled, and where it lands in the arithmetic.
+   *
+   * It cannot go on its own day. Every day at or before today is answered by entries so that the
+   * running balance is verifiable by adding up the rows above it, and putting an unpaid bill there
+   * would have the app assert that money left the account when it plainly did not.
+   *
+   * So it is carried to the first day the forecast owns — tomorrow — which is also the earliest it
+   * could truthfully happen. The curve stays continuous, `balanceNow` stays exactly the sum of what
+   * was recorded, and the month stops closing on a figure that quietly forgot the rent. The screens
+   * get `overdueCents` to name it separately, because "already late" is not the same news as
+   * "coming up".
+   */
+  const late = era === 'current' ? overdue(series.filter((s) => holding.has(s.accountId)), entries, today, deferrals) : [];
+  const overdueCents = late.reduce((n, o) => n + o.amountCents, 0);
+  if (era === 'current' && to > today) {
+    const tomorrow = dayKey(addDays(todayD, 1));
+    for (const o of late) {
+      plan.set(tomorrow, (plan.get(tomorrow) ?? 0) + signed(o.amountCents, o.direction));
+    }
+  }
+
+  let running = openingBalance(accounts, entries, series, today, from, deferrals);
   const balanceStart = running;
 
   const points: CurvePoint[] = [];
@@ -320,6 +457,8 @@ export function monthCurve(
     from,
     to,
     era,
+    overdue: late,
+    overdueCents,
   };
 }
 
@@ -336,12 +475,18 @@ function openingBalance(
   series: Series[],
   today: string,
   from: string,
+  deferrals: Map<string, Deferral>,
 ): Cents {
   const eve = dayKey(addDays(parseDay(from), -1));
   if (eve <= today) return balanceToday(accounts, entries, eve);
 
   let running = balanceToday(accounts, entries, today);
-  for (const o of project(series, dayKey(addDays(parseDay(today), 1)), eve, settled(entries))) {
+  // What is still owed from this month travels with the walk: a month reached from today has to
+  // carry the bills today has not paid, or every month after it opens richer than it is.
+  for (const o of overdue(series, entries, today, deferrals)) {
+    running += signed(o.amountCents, o.direction);
+  }
+  for (const o of project(series, dayKey(addDays(parseDay(today), 1)), eve, settled(entries), deferrals)) {
     running += signed(o.amountCents, o.direction);
   }
   return running;
@@ -354,6 +499,11 @@ export interface DayItem {
   direction: Direction;
   /** False when this is a projection rather than something that was recorded. */
   settled: boolean;
+  /**
+   * True when its day has already passed and nothing settled it. Still a projection — the money has
+   * not moved — but it is late rather than merely expected, and the screens say so differently.
+   */
+  overdue: boolean;
   /** The occurrence this row is, when it is still one. Null once something has recorded it. */
   occurrence: { seriesId: string; scheduled: string; accountId: string } | null;
 }
@@ -369,9 +519,20 @@ export function dayItems(
   series: Series[],
   day: string,
   today: string,
+  deferrals: Map<string, Deferral>,
 ): DayItem[] {
+  const asItem = (o: Occurrence, late: boolean): DayItem => ({
+    title: o.title,
+    category: o.category,
+    amountCents: o.amountCents,
+    direction: o.direction,
+    settled: false,
+    overdue: late,
+    occurrence: { seriesId: o.seriesId, scheduled: o.date, accountId: o.accountId },
+  });
+
   if (day <= today) {
-    return entries
+    const recorded = entries
       .filter((e) => e.date === day)
       .map((e) => ({
         title: e.title,
@@ -379,17 +540,27 @@ export function dayItems(
         amountCents: e.amountCents,
         direction: e.direction,
         settled: true,
+        overdue: false,
         occurrence: null,
       }));
+
+    /*
+     * A day that has passed is answered by what was recorded — and by what was due on it and never
+     * was. The second half used to be dropped on the argument that laying a projection over a past
+     * day invents a bill the owner either paid or did not. The argument holds for a bill that *was*
+     * paid, and settlement already removes those by identity; what was left over was not an
+     * invention but the one thing still genuinely owed.
+     */
+    const monthStart = dayKey(startOfMonth(parseDay(today)));
+    const late =
+      day >= monthStart
+        ? project(series, day, day, settled(entries), deferrals).map((o) => asItem(o, true))
+        : [];
+
+    return [...recorded, ...late];
   }
-  return project(series, day, day, settled(entries)).map((o) => ({
-    title: o.title,
-    category: o.category,
-    amountCents: o.amountCents,
-    direction: o.direction,
-    settled: false,
-    occurrence: { seriesId: o.seriesId, scheduled: o.date, accountId: o.accountId },
-  }));
+
+  return project(series, day, day, settled(entries), deferrals).map((o) => asItem(o, false));
 }
 
 /** What is still committed between today and `days` from now, soonest first. */
@@ -397,11 +568,12 @@ export function upcoming(
   series: Series[],
   entries: Entry[],
   today: string,
+  deferrals: Map<string, Deferral>,
   days = 7,
 ): Occurrence[] {
   const t = parseDay(today);
   const to = dayKey(new Date(t.getFullYear(), t.getMonth(), t.getDate() + days));
-  return project(series, today, to, settled(entries));
+  return project(series, today, to, settled(entries), deferrals);
 }
 
 export interface CategoryTotal {
@@ -475,6 +647,8 @@ export interface TapeItem {
   direction: Direction;
   /** False when this is a projection rather than something that was recorded. */
   settled: boolean;
+  /** True when its day has passed and nothing settled it. Draws on its day, moves no balance. */
+  overdue: boolean;
   /** The hour the owner gave this lançamento, when they gave one. Always null on a projection —
       there is no hour to show for money that has not moved yet. */
   time: string | null;
@@ -531,6 +705,7 @@ export function ledgerTape(
   today: string,
   from: string,
   to: string,
+  deferrals: Map<string, Deferral>,
 ): TapeDay[] {
   const holding = new Set(accounts.filter((a) => a.kind !== 'card').map((a) => a.id));
 
@@ -550,43 +725,71 @@ export function ledgerTape(
       amountCents: e.amountCents,
       direction: e.direction,
       settled: true,
+      overdue: false,
       time: e.time,
       installment: null,
       occurrence: null,
     });
   }
 
+  const planned = series.filter((s) => holding.has(s.accountId));
+  const asItem = (o: Occurrence, late: boolean): TapeItem => ({
+    key: keyOf(o),
+    title: o.title,
+    category: o.category,
+    amountCents: o.amountCents,
+    direction: o.direction,
+    settled: false,
+    overdue: late,
+    time: null,
+    installment: o.installment,
+    occurrence: { seriesId: o.seriesId, scheduled: o.date, accountId: o.accountId },
+  });
+
   if (to > today) {
     const planFrom = from > today ? from : dayKey(addDays(parseDay(today), 1));
-    const planned = series.filter((s) => holding.has(s.accountId));
-    for (const o of project(planned, planFrom, to, settled(entries))) {
-      push(o.date, {
-        key: keyOf(o),
-        title: o.title,
-        category: o.category,
-        amountCents: o.amountCents,
-        direction: o.direction,
-        settled: false,
-        time: null,
-        installment: o.installment,
-        occurrence: { seriesId: o.seriesId, scheduled: o.date, accountId: o.accountId },
-      });
+    for (const o of project(planned, planFrom, to, settled(entries), deferrals)) {
+      push(o.on, asItem(o, false));
     }
+  }
+
+  /*
+   * The overdue rows, drawn on the day they were due and contributing nothing to the running total.
+   *
+   * Both halves of that matter. Drawn on their own day, because that is where the reader looks for
+   * them and what makes "venceu dia 8" legible. Contributing nothing, because this column's whole
+   * claim is that a reader can verify it by adding up the rows above — see the note on this
+   * function — and an unpaid bill has moved no money. So the row shows, the balance does not budge,
+   * and the arithmetic stays honest in both directions at once.
+   */
+  for (const o of overdue(planned, entries, today, deferrals)) {
+    if (o.on < from || o.on > to) continue;
+    push(o.on, asItem(o, true));
   }
 
   if (today >= from && today <= to && !byDay.has(today)) byDay.set(today, []);
 
-  let running = openingBalance(accounts, entries, series, today, from);
+  let running = openingBalance(accounts, entries, series, today, from, deferrals);
 
   return [...byDay.keys()]
     .sort()
     .map((date) => {
       // Heaviest first inside a day. Order of insertion would mean "whatever the database returned",
-      // which is not an order the reader can rely on across a reseed.
+      // which is not an order the reader can rely on across a reseed. Two installments of one debt
+      // landing together — a deferred one beside the month's own — are the same amount to the cent,
+      // so the number is the only thing that can separate them, and it has to: parcela 7 and
+      // parcela 8 trading places between renders would undo the point of numbering them.
       const items = (byDay.get(date) as TapeItem[]).sort(
-        (a, b) => b.amountCents - a.amountCents,
+        (a, b) =>
+          b.amountCents - a.amountCents ||
+          (a.installment && b.installment ? a.installment.n - b.installment.n : 0),
       );
-      const moved = items.reduce((n, i) => n + signed(i.amountCents, i.direction), 0);
+      // An overdue row is money still owed, not money that moved. It draws on its day and leaves
+      // the running balance alone — see where it is pushed, above.
+      const moved = items.reduce(
+        (n, i) => (i.overdue ? n : n + signed(i.amountCents, i.direction)),
+        0,
+      );
       running += moved;
       return { date, items, moved, balance: running, actual: date <= today };
     });

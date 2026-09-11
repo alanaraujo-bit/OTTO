@@ -67,6 +67,7 @@ function Form() {
   const entries = useLedger((s) => s.entries);
   const load = useLedger((s) => s.load);
   const storedCategories = useLedger((s) => s.categories);
+  const deferrals = useLedger((s) => s.deferralsBySlot);
 
   // The same vocabulary the lançamento screen offers, in the same order. Two lists that diverge
   // teach the owner to distrust both.
@@ -109,8 +110,8 @@ function Form() {
    */
   const today = useMemo(() => dayKey(new Date()), []);
   const open = useMemo(
-    () => (existing ? nextOpen(existing, entries, today) : null),
-    [existing, entries, today],
+    () => (existing ? nextOpen(existing, entries, today, deferrals) : null),
+    [existing, entries, deferrals, today],
   );
   /*
    * Where the settlement lands: the account the rule already names.
@@ -194,8 +195,7 @@ function Form() {
     title.trim() !== '' &&
     cents > 0 &&
     dayOfMonth !== null &&
-    (shape !== 'debt' ||
-      (counterparty.trim() !== '' && totalCount !== null && paidCount <= totalCount));
+    (shape !== 'debt' || (totalCount !== null && paidCount <= totalCount));
 
   /** The draft as the engine would see it, so the yearly figure is the real one and not an estimate. */
   const preview = useMemo(() => {
@@ -211,20 +211,35 @@ function Form() {
       direction: shape === 'debt' ? debtDirection : shape === 'in' ? 'in' : 'out',
       dayOfMonth,
       /*
-       * A debt always derives its start from how many installments are paid, on edit as well as on
-       * create. The engine numbers installments from startDate, and `remaining` counts from
-       * `paidCount` — they are two spellings of one fact. Preserving the old start while the owner
-       * corrects "parcelas ja pagas" from 5 to 8 makes the two disagree: the razao would keep
-       * numbering from the calendar while this screen counts four left.
+       * The start is written once and never rewritten.
+       *
+       * It used to be derived from `paidCount` on every save, on the argument that the two were
+       * "two spellings of one fact". They are not, and the difference surfaces the moment an
+       * installment is skipped or deferred: `paidCount` counts how many are done, while the start
+       * anchors *which month is which installment*. Recomputing it slid the anchor forward every
+       * time the owner corrected an unrelated field, and since installment numbers are read off the
+       * calendar, a slid anchor renumbers payments that already happened — the exact renumbering
+       * this feature must never do.
+       *
+       * So a debt derives its start only when it is created, from the installments declared paid.
+       * After that the anchor is a fact about the debt, not a view of its progress.
        */
       startDate:
-        shape === 'debt'
+        shape === 'debt' && existing == null
           ? startDateFor(shape, paidCount, today)
           : (existing?.startDate ?? today),
       endDate: existing?.endDate ?? null,
       totalCount: shape === 'debt' ? totalCount : null,
       paidCount: shape === 'debt' ? paidCount : 0,
-      counterparty: shape === 'debt' ? counterparty.trim() : null,
+      /*
+       * Empty means null, not ''.
+       *
+       * Naming the other side is optional — a parcelamento no cartão is a debt with nobody on the
+       * far end. But every reader of this field spells its absence `?? 'alguém'`, and nullish
+       * coalescing does not catch the empty string: storing '' would render "você deve a " with the
+       * sentence hanging open.
+       */
+      counterparty: shape === 'debt' ? counterparty.trim() || null : null,
       linkedShareToken: existing?.linkedShareToken ?? null,
     };
     return { draft, commitment: commitmentFor(draft, today) };
@@ -351,7 +366,11 @@ function Form() {
         {shape === 'debt' ? (
           <Reveal index={2} {...ENTER}>
             <Field
-              label={debtDirection === 'out' ? 'Para quem você deve' : 'Quem deve para você'}
+              label={
+                debtDirection === 'out'
+                  ? 'Para quem você deve (opcional)'
+                  : 'Quem deve para você (opcional)'
+              }
               value={counterparty}
               onChangeText={setCounterparty}
               autoCapitalize="words"
@@ -522,11 +541,14 @@ function kindOf(shape: Shape, existing: Series | null): SeriesKind {
 }
 
 /**
- * Where a new series starts.
+ * Where a new series starts. **Called on creation only** — see the note at the call site.
  *
  * A debt with installments already paid did not start today — it started `paidCount` months ago, and
  * the engine numbers installments from `startDate`. Getting this wrong would make a debt 8 of 24
  * report as 1 of 24 on the very first projection.
+ *
+ * Getting it wrong *later* is worse, which is why this no longer runs on edit: every installment
+ * number in the app and in a shared link is measured from here, so moving it renumbers history.
  */
 function startDateFor(shape: Shape, paidCount: number, today: string): string {
   if (shape !== 'debt' || paidCount <= 0) return today;

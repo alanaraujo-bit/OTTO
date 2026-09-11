@@ -70,6 +70,7 @@ function RazaoBody() {
   const accounts = useLedger((s) => s.accounts);
   const series = useLedger((s) => s.series);
   const entries = useLedger((s) => s.entries);
+  const deferrals = useLedger((s) => s.deferralsBySlot);
 
   const list = useRef<FlatList<Row>>(null);
   const [ruleWidth, setRuleWidth] = useState(0);
@@ -126,8 +127,8 @@ function RazaoBody() {
     const from = dayKey(startOfMonth(first ? parseDay(first) : t));
     const to = dayKey(endOfMonth(addMonths(t, 6)));
 
-    return ledgerTape(accounts, entries, series, today, from, to);
-  }, [ready, error, accounts, entries, series, today]);
+    return ledgerTape(accounts, entries, series, today, from, to, deferrals);
+  }, [ready, error, accounts, entries, series, deferrals, today]);
 
   /** The tape flattened into rows, with the offsets and sticky indices the list needs. */
   const plan = useMemo(() => {
@@ -375,11 +376,24 @@ function ItemRow({
   onSettled: (item: TapeItem) => void;
   onFailed: (e: unknown) => void;
 }) {
+  /*
+   * An installment says which one it is before anything else — that is the whole reason it is
+   * numbered, and with deferral two of them can land on one day. Everything else is told by the
+   * state it is in: recorded, late, or still ahead.
+   */
+  const state = item.settled
+    ? item.time
+      ? ' · ' + item.time
+      : ''
+    : item.overdue
+      ? item.direction === 'in'
+        ? ' · não recebido'
+        : ' · vencido'
+      : ' · previsto';
+
   const note = item.installment
-    ? item.category + ' · parcela ' + item.installment.n + '/' + item.installment.of
-    : item.settled
-      ? item.category + (item.time ? ' · ' + item.time : '')
-      : item.category + ' · previsto';
+    ? item.category + ' · parcela ' + item.installment.n + '/' + item.installment.of + state
+    : item.category + state;
 
   const body = (
     <View style={[styles.itemRow, { height }]}>
