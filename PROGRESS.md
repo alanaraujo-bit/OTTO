@@ -4,7 +4,7 @@ Arquivo de retomada. Se a sessão cair, comece por aqui.
 
 ---
 
-## Estado atual: **Fase 9.1 — barra do sistema, valores inteligentes, tudo editável. Novo APK.**
+## Estado atual: **Fase 9.2 — todo número da Home leva ao que ele soma. APK 0.2.0 no ar.**
 
 Fases 0 a 4 fechadas. A Home foi aprovada por Alan no aparelho em 2026-09-02 e, junto com as telas
 de acesso, é a régua visual do resto do projeto.
@@ -1329,10 +1329,94 @@ prova de que o formato agrupado nunca pode voltar ao parser.
 
 ---
 
+## Fase 9.2 — todo número leva ao que ele soma, e o APK vira 0.2.0
+
+Um total é uma afirmação sobre um conjunto de movimentos, e quem lê um total quer aquele conjunto.
+Até aqui a Home afirmava e não entregava: o fluxo do mês e as linhas dos próximos dias eram leitura
+pura, e a única forma de chegar ao que estava por trás de um número era refazer o caminho pelo razão
+na mão.
+
+### O que passou a ser navegável
+- **O fluxo do mês** abre o razão cortado pela direção tocada e no mês em que o stepper está — não
+  no mês de hoje. "A pagar" e "a receber" são duas perguntas diferentes; levar as duas à mesma
+  página não responde nenhuma, então a direção viaja junto com o toque.
+- **Uma previsão** abre a regra que a produziu, que é onde mora o "já recebi".
+- **Um lançamento já registrado** abre a si mesmo, na tela que edita um.
+
+Os dois últimos casos são exclusivos por construção, e é o modelo que garante isso: `DayItem` passou
+a carregar um `entryId` ao lado do `occurrence` que já tinha. Previsão tem `occurrence` e não tem
+`entryId`; lançamento tem o inverso. Uma linha sem nenhum dos dois — que hoje não existe — continua
+sendo leitura, em vez de virar um controle que não faz nada.
+
+A ida ao razão passa pelo `go` da barra, não por `push`, e por isso o `go` ganhou parâmetros.
+Chegar ao razão vindo da Home tem que deixar o dono **no** razão, com o marcador da aba aceso — não
+numa página empilhada por cima dele, de onde o voltar mente sobre onde ele está.
+
+### Verificação
+`npx tsc --noEmit` limpo. `npm run ledger` — **109 checagens** de aritmética passando; nada aqui
+tocou o motor puro que elas cobrem, o que é exatamente o ponto: esta fase move navegação, não
+dinheiro.
+
+### O APK de 0.2.0, e por que ele encolheu 40 MB
+
+`expo prebuild` + `gradlew assembleRelease`, mesmo caminho local de sempre — sem EAS, sem conta.
+Duas mudanças em relação ao primeiro APK:
+
+**A versão agora é dizível.** `0.1.0` / `versionCode 1` viraram `0.2.0` / `versionCode 2`, em
+`app.json` (`expo.version` e `expo.android.versionCode`, de onde o prebuild escreve o
+`build.gradle`). Sem isso, dois APKs diferentes se apresentam com o mesmo nome nas configurações do
+Android e "a última versão" não é verificável no aparelho — só de memória.
+
+**Só ARM.** O build universal deu **104 MB** e foi recusado no deploy: a Vercel não serve arquivo
+acima de 100 MB. Quase metade do peso eram as bibliotecas nativas de `x86` e `x86_64`, que só
+existem para emulador — e o emulador deste projeto está bloqueado por falta do driver de hipervisor
+(ver BLOCKERS). Rebuildado assim:
+
+```bash
+cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+```
+
+**63,4 MB.** É flag de linha de comando de propósito, e não uma edição do `gradle.properties`:
+`android/` é gitignorado e o prebuild o apaga inteiro, então a edição evaporaria no próximo build
+sem deixar rastro de por que o APK mudou de tamanho. O custo é real e é nenhum aqui: este APK não
+instala em emulador x86. Em celular, qualquer um, roda igual.
+
+Verificado antes de entregar, nos mesmos limites de sempre:
+- `aapt dump badging`: `com.alanaraujo.otto`, `versionCode 2`, `versionName 0.2.0`, `minSdk 24`,
+  `targetSdk 36`, `native-code: arm64-v8a armeabi-v7a`, permissões de biometria, notificação e
+  alarme exato presentes.
+- `apksigner verify`: assinatura válida, certificado `fac61745dc09…` — **o mesmo dos anteriores**,
+  então o Android instala por cima como atualização e a sessão no SecureStore sobrevive.
+- O bundle do Metro fechou sem erro, que já é um teste real: import quebrado ou erro de sintaxe faz
+  esta etapa falhar, não silenciar.
+
+O que isto não prova continua sendo que o app abre e roda no hardware. Quem decide é o aparelho.
+
+### A distribuição
+`vercel deploy --prod` com o APK em `public/OTTO.apk`, que a Vercel sobe direto do disco — o binário
+não está no git de propósito (`.gitignore`), porque 60 MB em histórico são pagos por todo clone,
+para sempre, a cada byte que muda. O link é fixo e não muda a cada build:
+
+**https://otto-financas.vercel.app/OTTO.apk**
+
+O mesmo deploy republica a web, porque o `buildCommand` da Vercel roda `expo export`. Conferir que o
+link entrega o build recém-feito, e não o anterior em cache, é um comando — o `content-length` tem
+que bater com o arquivo local:
+
+```bash
+curl -sI https://otto-financas.vercel.app/OTTO.apk | grep -i content-length
+```
+
+---
+
 ## Próximo passo
-**Instalar o APK atualizado e usar de novo com dados reais.** Mesma assinatura do anterior, então o
-Android trata como atualização — o que já foi lançado no aparelho continua lá. Depois disso, resta
-só o resto da Fase 9: escala de fonte 1.3, estados vazios e de erro, orçamento de start frio.
+**Instalar o APK 0.2.0 e usar de novo com dados reais.** Mesma assinatura dos anteriores, então o
+Android trata como atualização — o que já foi lançado no aparelho continua lá, e agora as
+configurações do Android sabem dizer qual versão está instalada. O que falta verificar no aparelho é
+o que a Fase 9.2 abriu: tocar um total do fluxo cai no razão com a aba certa acesa, no mês do
+stepper e cortado pela direção; e tocar uma linha dos próximos dias abre a regra, quando é previsão,
+ou o próprio lançamento, quando já foi registrado. Depois disso, resta só o resto da Fase 9: escala
+de fonte 1.3, estados vazios e de erro, orçamento de start frio.
 
 ## Comandos
 ```bash
@@ -1343,7 +1427,7 @@ node tools/states.mjs       # captura dos estados interativos
 node tools/measure.mjs      # ritmo vertical em dp
 node tools/contrast.mjs     # WCAG da paleta
 node tools/native-check.mjs # compatibilidade de módulos nativos com o Expo Go
-npm run ledger              # 69 checagens: projeção, fita, comparação, fatura, compromissos, gasto e avisos
+npm run ledger              # 109 checagens: projeção, fita, comparação, fatura, compromissos, gasto e avisos
 npx tsc --noEmit            # typecheck
 ```
 
@@ -1384,3 +1468,12 @@ npx tsc --noEmit            # typecheck
 - **No Android a transição não vem do deslize.** `animationDuration` do native-stack é iOS-only. A
   duração percebida vem da entrada do conteúdo (`Reveal` com `shift`), que continua depois que a
   página chega.
+- **O APK universal não cabe no link.** Um build com as quatro arquiteturas passa de 100 MB e a
+  Vercel recusa o arquivo — e metade desse peso é `x86`/`x86_64`, que só serve a um emulador que
+  este projeto não consegue rodar. `-PreactNativeArchitectures=arm64-v8a,armeabi-v7a` na linha de
+  comando, nunca no `gradle.properties`: `android/` é gitignorado e o prebuild o apaga, então a
+  edição some e leva junto a explicação de por que o APK tinha aquele tamanho.
+- **Subir um APK sem subir a versão entrega um arquivo que não sabe se apresentar.** `expo.version`
+  e `expo.android.versionCode` no `app.json` são o que o prebuild escreve no `build.gradle`. Sem
+  mexer neles, dois builds diferentes dizem o mesmo nome nas configurações do Android e "estou na
+  última versão?" vira memória, não verificação.
