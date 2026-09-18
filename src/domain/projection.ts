@@ -506,6 +506,13 @@ export interface DayItem {
   overdue: boolean;
   /** The occurrence this row is, when it is still one. Null once something has recorded it. */
   occurrence: { seriesId: string; scheduled: string; accountId: string } | null;
+  /**
+   * The entry behind this row, when there is one — the id `lançar` edits by.
+   *
+   * Null on a forecast, which has no row behind it; that case is addressed by `occurrence`. The
+   * two are exclusive, and between them every item the home screen draws can say where it leads.
+   */
+  entryId: string | null;
 }
 
 /**
@@ -529,6 +536,7 @@ export function dayItems(
     settled: false,
     overdue: late,
     occurrence: { seriesId: o.seriesId, scheduled: o.date, accountId: o.accountId },
+    entryId: null,
   });
 
   if (day <= today) {
@@ -542,6 +550,7 @@ export function dayItems(
         settled: true,
         overdue: false,
         occurrence: null,
+        entryId: e.id,
       }));
 
     /*

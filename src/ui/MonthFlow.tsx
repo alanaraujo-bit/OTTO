@@ -8,6 +8,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Txt } from '@/theme/text';
 import { Amount } from './Amount';
+import { Press } from './Press';
 import { color, space } from '@/theme/tokens';
 import { duration, ease, useReducedMotion } from '@/theme/motion';
 import { brlShort } from '@/domain/money';
@@ -33,6 +34,14 @@ export function MonthFlow({
   /** A closed month has no forecast half, so the bars are full and the captions say so. */
   closed,
   delay = 0,
+  /**
+   * Where each figure goes when it is touched, told which figure it was.
+   *
+   * A total is a claim about a set of movements, and the owner who reads it wants that set — not
+   * the month it sits in, the set. Which is why the direction travels with the tap: "a pagar" and
+   * "a receber" are two different questions and landing both on the same page answers neither.
+   */
+  onOpen,
 }: {
   outflow: Cents;
   outflowDone: Cents;
@@ -40,6 +49,7 @@ export function MonthFlow({
   inflowDone: Cents;
   closed: boolean;
   delay?: number;
+  onOpen?: (direction: 'in' | 'out') => void;
 }) {
   return (
     <View style={styles.row}>
@@ -51,6 +61,7 @@ export function MonthFlow({
         tone="negative"
         closed={closed}
         delay={delay}
+        onOpen={onOpen && (() => onOpen('out'))}
       />
       <View style={styles.split} />
       <Column
@@ -61,6 +72,7 @@ export function MonthFlow({
         tone="positive"
         closed={closed}
         delay={delay + 90}
+        onOpen={onOpen && (() => onOpen('in'))}
       />
     </View>
   );
@@ -74,6 +86,7 @@ function Column({
   tone,
   closed,
   delay,
+  onOpen,
 }: {
   label: string;
   total: Cents;
@@ -82,6 +95,7 @@ function Column({
   tone: 'positive' | 'negative';
   closed: boolean;
   delay: number;
+  onOpen?: () => void;
 }) {
   const reduced = useReducedMotion();
   const ratio = total > 0 ? Math.min(1, Math.max(0, done / total)) : 0;
@@ -119,8 +133,8 @@ function Column({
 
   const left = total - done;
 
-  return (
-    <View style={styles.col}>
+  const body = (
+    <>
       <Txt variant="micro" f="sansMedium" t="muted" style={styles.label}>
         {label.toUpperCase()}
       </Txt>
@@ -142,7 +156,27 @@ function Column({
             ? `${brlShort(done)} realizado`
             : `${brlShort(left)} ainda por vir`}
       </Txt>
-    </View>
+    </>
+  );
+
+  /*
+   * A month with nothing in it opens onto nothing, so it stays a readout.
+   *
+   * No printed marker says these are live. That is the convention the donut's legend already set —
+   * the press itself is the answer — and a hint under each column would be the fifth line in a
+   * block that has to stay above the fold. The whole column is the target rather than the figure
+   * alone, which is what carries it past 48dp without inventing padding.
+   */
+  if (!onOpen || total === 0) return <View style={styles.col}>{body}</View>;
+
+  return (
+    <Press
+      onPress={onOpen}
+      outerStyle={styles.col}
+      accessibilityLabel={`${label}, ${brlShort(total)}. Abrir no razão.`}
+    >
+      {body}
+    </Press>
   );
 }
 

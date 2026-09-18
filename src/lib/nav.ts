@@ -18,7 +18,7 @@ interface NavState {
   current: TabKey;
   /** -1 going left along the bar, +1 going right, 0 for an arrival with no previous position. */
   direction: number;
-  go: (to: TabKey) => void;
+  go: (to: TabKey, params?: Record<string, string>) => void;
 }
 
 /**
@@ -42,11 +42,13 @@ export const useNav = create<NavState>((set, get) => ({
   current: 'home',
   direction: 0,
 
-  go: (to) => {
+  go: (to, params) => {
     const { current } = get();
     if (to === current) return;
     set({ from: current, current: to, direction: Math.sign(TABS.indexOf(to) - TABS.indexOf(current)) });
-    router.replace(ROUTE[to]);
+    // A tab can be arrived at already pointed somewhere — the home screen sends the ledger a
+    // month to land on. Still a replace: a tab is a destination, not a page over another.
+    router.replace(params ? { pathname: ROUTE[to], params } : ROUTE[to]);
   },
 }));
 

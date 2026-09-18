@@ -6,7 +6,7 @@ import {
   useWindowDimensions,
   type LayoutChangeEvent,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { addMonths, endOfMonth, format, startOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import Svg, { Line } from 'react-native-svg';
@@ -17,15 +17,15 @@ import { Amount } from '@/ui/Amount';
 import { TabBar } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { SwipeRow } from '@/ui/SwipeRow';
+import { Press } from '@/ui/Press';
 import { Txt } from '@/theme/text';
 import { color, space, type } from '@/theme/tokens';
 import { useSnackbar } from '@/ui/Snackbar';
-import { saidPlainly } from '@/lib/errors';
 import { useLedger } from '@/state/ledger';
-import * as Crypto from 'expo-crypto';
-import { deleteEntry, settleOccurrence } from '@/db/repo';
+import { deleteEntry } from '@/db/repo';
 import { dayKey, ledgerTape, parseDay, type TapeDay, type TapeItem } from '@/domain/projection';
 import { brl } from '@/domain/money';
+import type { Direction } from '@/domain/model';
 
 /**
  * The ledger, unfolded.
@@ -46,6 +46,18 @@ import { brl } from '@/domain/money';
  *
  * There is one seam, and it is today — drawn in ink, the single place on this screen where a rule is
  * allowed to be brighter than a hairline.
+ *
+ * **The tape can arrive cut, and only ever on arrival.** The home screen's two totals are claims
+ * about one direction of one month, and the owner who touches "a pagar" is asking to see those
+ * movements — not a month with the answer mixed into it. So a `focus` param cuts the tape to one
+ * direction. This does not retract the argument above: the ledger's own state is the whole tape,
+ * the cut is something another screen hands it, and it says so in the masthead with a way to drop
+ * it in one tap. What is never allowed is a cut the owner cannot see or undo.
+ *
+ * A cut tape also stops carrying a running balance. The figure on a day's rule is the balance
+ * across *all* movements, and printing it beside half of them would be a number describing rows
+ * that are not there. Filtered, the rule carries the day's total in the direction being read —
+ * same geometry, a claim that matches what is under it.
  */
 export default function Razao() {
   return (
@@ -81,6 +93,39 @@ function RazaoBody() {
 
   // Read once per mount. A date recomputed inside a render makes every derived value a new object.
   const today = useMemo(() => dayKey(new Date()), []);
+
+  /**
+   * Where to open, when someone sent us somewhere.
+   *
+   * A total on the home screen belongs to a month as well as to a direction, so the tap carries
+   * both: `focus` cuts the tape, `at` says where to open it. Landing on today in a cut tape would
+   * answer the wrong month — the owner may well have been reading November.
+   *
+   * Read on mount and not after, because that is the only moment `initialScrollIndex` is consulted.
+   */
+  const { at, focus } = useLocalSearchParams<{ at?: string; focus?: string }>();
+  const land = useMemo(() => {
+    const day = Array.isArray(at) ? at[0] : at;
+    return day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : today;
+  }, [at, today]);
+
+  /**
+   * The direction the tape is cut to, or null for the whole ledger.
+   *
+   * The param *is* the state, rather than seeding a `useState` beside it. Two copies of one fact
+   * get out of step in both directions here: the screen is a tab, so it can stay mounted while the
+   * owner leaves and comes back through the bar with no `focus` at all — a filter still set from a
+   * visit ten minutes ago, with nothing on screen explaining how it got there — and arriving twice
+   * on the same direction would not change a seeded state at all, so the second tap on "a pagar"
+   * would do nothing.
+   *
+   * Dropping the filter therefore clears the param rather than a local flag. That also has to be
+   * possible without navigating: the owner got here by touching a total, and making them go back
+   * to the home screen to see everything would turn the cut into a trap.
+   */
+  const arrived = Array.isArray(focus) ? focus[0] : focus;
+  const cut: Direction | null = arrived === 'in' || arrived === 'out' ? arrived : null;
+  const clearCut = () => router.setParams({ focus: '' });
 
   /*
    * Where an anticipated settlement lands.
@@ -127,8 +172,27 @@ function RazaoBody() {
     const from = dayKey(startOfMonth(first ? parseDay(first) : t));
     const to = dayKey(endOfMonth(addMonths(t, 6)));
 
-    return ledgerTape(accounts, entries, series, today, from, to, deferrals);
-  }, [ready, error, accounts, entries, series, deferrals, today]);
+    const full = ledgerTape(accounts, entries, series, today, from, to, deferrals);
+    if (!cut) return full;
+
+    /*
+     * Cut here rather than inside `plan`, so every measurement downstream — the offsets, the sticky
+     * indices, the row the list opens on — is taken from the tape the owner is actually looking at.
+     * Filtering later would leave `getItemLayout` describing rows that are no longer rendered, and
+     * the list would land somewhere near the right day instead of on it.
+     *
+     * A day with nothing in this direction is dropped whole. Keeping it would be the filter
+     * refusing to do the one thing it is for. `moved` is replaced by the day's total in this
+     * direction, unsigned: it is what the rule prints now that the running balance cannot honestly
+     * stand there.
+     */
+    return full
+      .map((day) => {
+        const items = day.items.filter((it) => it.direction === cut);
+        return { ...day, items, moved: items.reduce((n, it) => n + it.amountCents, 0) };
+      })
+      .filter((day) => day.items.length > 0);
+  }, [ready, error, accounts, entries, series, deferrals, today, cut]);
 
   /** The tape flattened into rows, with the offsets and sticky indices the list needs. */
   const plan = useMemo(() => {
@@ -138,11 +202,11 @@ function RazaoBody() {
     const sticky: number[] = [];
     const offsets: number[] = [];
     let y = 0;
-    let todayRow: number | null = null;
+    let landRow: number | null = null;
 
     for (const day of tape) {
       sticky.push(rows.length);
-      if (todayRow === null && day.date >= today) todayRow = rows.length;
+      if (landRow === null && day.date >= land) landRow = rows.length;
 
       offsets.push(y);
       y += H.day;
@@ -155,8 +219,34 @@ function RazaoBody() {
       }
     }
 
-    return { rows, sticky, offsets, todayRow: todayRow ?? 0 };
-  }, [tape, today, H]);
+    return { rows, sticky, offsets, landRow: landRow ?? 0 };
+  }, [tape, land, today, H]);
+
+  /*
+   * Changing the cut re-anchors the list.
+   *
+   * `initialScrollIndex` is read once, at mount, so dropping the filter would leave the viewport
+   * at an offset measured against a tape that no longer exists — the owner taps "ver tudo" and
+   * arrives in March. Re-landing on the same day they were sent to keeps the month under the thumb
+   * while the rows around it change, which is the only thing that should change.
+   *
+   * `plan` is read through a ref so this fires on the cut and not on every reload of the ledger.
+   */
+  const planRef = useRef(plan);
+  planRef.current = plan;
+  const anchored = useRef(false);
+  useEffect(() => {
+    if (!anchored.current) {
+      anchored.current = true;
+      return;
+    }
+    const p = planRef.current;
+    if (!p || p.rows.length === 0) return;
+    list.current?.scrollToIndex({
+      index: Math.min(p.landRow, p.rows.length - 1),
+      animated: false,
+    });
+  }, [cut]);
 
   const onRule = (e: LayoutChangeEvent) => {
     const w = Math.round(e.nativeEvent.layout.width);
@@ -168,9 +258,26 @@ function RazaoBody() {
       <Reveal index={0} {...ENTER.head}>
         <View style={styles.top} onLayout={onRule}>
           <Wordmark height={22} animate alive />
-          <Txt variant="micro" t="faint">
-            passado e previsto, na mesma coluna
-          </Txt>
+          {/*
+            The masthead states the cut and is how it is dropped. A filter the owner can see but
+            not undo is a trap, and the caption slot is already the screen saying what it is
+            showing — so a cut tape simply says something different there. `ink` on the verb,
+            because it is the one word on this screen that is a control.
+          */}
+          {cut ? (
+            <Press onPress={clearCut} accessibilityLabel="Ver o razão inteiro">
+              <Txt variant="micro" t="faint">
+                só {cut === 'out' ? 'saídas' : 'entradas'} ·{' '}
+                <Txt variant="micro" t="ink">
+                  ver tudo
+                </Txt>
+              </Txt>
+            </Press>
+          ) : (
+            <Txt variant="micro" t="faint">
+              passado e previsto, na mesma coluna
+            </Txt>
+          )}
         </View>
       </Reveal>
 
@@ -209,26 +316,16 @@ function RazaoBody() {
           keyExtractor={(r) => r.key}
           renderItem={({ item: row }) =>
             row.type === 'day' ? (
-              <DayRule day={row.day} today={row.today} height={H.day} width={ruleWidth} />
+              <DayRule day={row.day} today={row.today} height={H.day} width={ruleWidth} cut={cut} />
             ) : (
               <ItemRow
                 item={row.item}
                 height={H.item}
                 holding={holding}
-                today={today}
                 onDeleted={() => {
                   void load();
                   snack('Lançamento apagado.', 'info');
                 }}
-                onSettled={(item) => {
-                  void load();
-                  snack(
-                    (item.direction === 'in' ? 'Recebido' : 'Pago') +
-                      ' hoje. A próxima volta no mês que vem.',
-                    'info',
-                  );
-                }}
-                onFailed={(e) => snack(saidPlainly(e), 'error')}
               />
             )
           }
@@ -242,8 +339,9 @@ function RazaoBody() {
             offset: plan.offsets[index] ?? 0,
             index,
           })}
-          /* Opening at the top would open in history. The ledger opens where the owner is. */
-          initialScrollIndex={plan.todayRow}
+          /* Opening at the top would open in history. The ledger opens where the owner is — or
+             where they were sent, when a total on the home screen sent them to a month. */
+          initialScrollIndex={plan.landRow}
           onScrollToIndexFailed={({ index }) => {
             // Only reachable if the measured layout ever disagrees with `getItemLayout`. Landing at
             // an approximate offset beats landing at the beginning of time.
@@ -288,7 +386,10 @@ function DayRule({
   today,
   height,
   width,
+  cut,
 }: {
+  /** The direction the tape is cut to, when it is. Changes what the rule's figure means. */
+  cut: Direction | null;
   day: TapeDay;
   today: boolean;
   height: number;
@@ -335,15 +436,31 @@ function DayRule({
         {/*
           The running figure. Faint while it is forecast, because a projected balance is a different
           kind of claim from a recorded one and the reader should not have to remember which.
+
+          Cut, it is the day's total in the direction being read instead — see the note at the top
+          of this file. A running balance printed beside half a day's movements would be a figure
+          describing rows that are not on screen, which is the one thing a filter must not do. The
+          tone follows the direction rather than the sign, because in a cut tape every figure is the
+          same kind of money and `negative` would mean nothing but "this is the saídas page".
         */}
         <Txt
           variant="label"
           f="monoMedium"
-          t={day.balance < 0 ? 'negative' : day.actual ? 'muted' : 'faint'}
+          t={
+            cut
+              ? day.actual
+                ? 'muted'
+                : 'faint'
+              : day.balance < 0
+                ? 'negative'
+                : day.actual
+                  ? 'muted'
+                  : 'faint'
+          }
           tabular
           numberOfLines={1}
         >
-          {brl(day.balance)}
+          {cut ? brl(day.moved) : brl(day.balance)}
         </Txt>
       </View>
     </View>
@@ -361,20 +478,14 @@ function DayRule({
 function ItemRow({
   item,
   height,
-  today,
   holding,
   onDeleted,
-  onSettled,
-  onFailed,
 }: {
   item: TapeItem;
   height: number;
-  today: string;
   /** The accounts that actually hold money — the only ones an antecipação may land in. */
   holding: Set<string>;
   onDeleted: () => void;
-  onSettled: (item: TapeItem) => void;
-  onFailed: (e: unknown) => void;
 }) {
   /*
    * An installment says which one it is before anything else — that is the whole reason it is
@@ -421,12 +532,19 @@ function ItemRow({
    * dia 5". That records the money on today and retires this occurrence, so the rule's next turn is
    * next month, on the day the owner set. Nothing about the series changes, which is why deleting
    * the lançamento brings the forecast back exactly where it was.
+   *
+   * **It opens the keypad rather than writing the settlement here.** A rule states what it expects;
+   * what actually arrived is a separate fact, and the two agreeing is a common case, not a
+   * guarantee. Settling silently at the forecast figure meant a bônus that came in at 1.150 was
+   * recorded as 1.300 with no moment at which the owner could say otherwise. So the gesture hands
+   * the occurrence to `lançar`, already filled in — one more tap when the number is right, and the
+   * only path there is when it is not.
    */
   if (!item.settled) {
     // A rule booked against a card settles nowhere the balance can see, so it gets no gesture at
     // all: an antecipação that lands on a credit line is not an antecipação, it is a wrong number.
     if (!item.occurrence || !holding.has(item.occurrence.accountId)) return body;
-    const { seriesId, scheduled, accountId } = item.occurrence;
+    const { seriesId, scheduled } = item.occurrence;
     return (
       <SwipeRow
         height={height}
@@ -435,20 +553,11 @@ function ItemRow({
           {
             label: item.direction === 'in' ? 'recebi' : 'paguei',
             tone: 'muted',
-            onPress: () => {
-              void settleOccurrence(seriesId, scheduled, {
-                id: Crypto.randomUUID(),
-                date: today,
-                time: null,
-                amountCents: item.amountCents,
-                direction: item.direction,
-                title: item.title,
-                category: item.category,
-                accountId,
-              })
-                .then(() => onSettled(item))
-                .catch(onFailed);
-            },
+            onPress: () =>
+              router.push({
+                pathname: '/lancar',
+                params: { settlesSeries: seriesId, settlesDate: scheduled },
+              }),
           },
         ]}
         onPress={() => router.push({ pathname: '/recorrencia', params: { id: seriesId } })}

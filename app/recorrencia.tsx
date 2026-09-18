@@ -19,7 +19,7 @@ import { Txt } from '@/theme/text';
 import { color, radius, space } from '@/theme/tokens';
 import { useSnackbar } from '@/ui/Snackbar';
 import { useLedger } from '@/state/ledger';
-import { deleteSeries, insertSeries, settleOccurrence, updateSeries } from '@/db/repo';
+import { deleteSeries, insertSeries, updateSeries } from '@/db/repo';
 import { pickerOrder } from '@/domain/category';
 import { dayKey, nextOpen, parseDay } from '@/domain/projection';
 import { commitmentFor } from '@/domain/commitments';
@@ -96,7 +96,6 @@ function Form() {
   const [paid, setPaid] = useState('');
   const [saving, setSaving] = useState(false);
   const [armed, setArmed] = useState(false);
-  const [settling, setSettling] = useState(false);
   // A rule that already exists opens as a reading. Creating one has nothing to read, so the form is
   // the only sensible landing and this starts true there.
   const [editing, setEditing] = useState(false);
@@ -128,31 +127,22 @@ function Form() {
     return accounts.find((a) => a.kind !== 'card')?.id ?? null;
   }, [accounts, existing]);
 
-  const settleNow = async () => {
+  /*
+   * Settling goes through the keypad, not straight to the ledger.
+   *
+   * A rule is a statement of what is expected; what arrived is a different fact. They agree most
+   * months and that is exactly what made writing `existing.amountCents` here look correct — until
+   * the bônus comes in under, the conta comes in over, and the owner has recorded a number they
+   * never received with no moment at which they could have said so. `lançar` already knows how to
+   * settle an occurrence at a figure the owner types, so this hands the occurrence over instead of
+   * keeping a second, blinder copy of the same write.
+   */
+  const settleNow = () => {
     if (!existing || !open || !settleAccount) return;
-    setSettling(true);
-    try {
-      await settleOccurrence(existing.id, open.date, {
-        id: Crypto.randomUUID(),
-        date: today,
-        time: null,
-        amountCents: existing.amountCents,
-        direction: existing.direction,
-        title: existing.title,
-        category: existing.category,
-        accountId: settleAccount,
-      });
-      await load();
-      snack(
-        (existing.direction === 'in' ? 'Recebido' : 'Pago') +
-          ' hoje. A próxima volta no mês que vem.',
-        'info',
-      );
-      router.back();
-    } catch (e) {
-      setSettling(false);
-      snack(e instanceof Error ? e.message : 'Não consegui lançar.', 'error');
-    }
+    router.push({
+      pathname: '/lancar',
+      params: { settlesSeries: existing.id, settlesDate: open.date },
+    });
   };
 
   // A destructive action that arms itself must be able to stand down, or the next stray tap on the
@@ -274,8 +264,8 @@ function Form() {
         history={history}
         open={open}
         canSettle={Boolean(settleAccount) && !existing.linkedShareToken}
-        settling={settling}
-        onSettle={() => void settleNow()}
+        settling={false}
+        onSettle={settleNow}
         onEdit={() => setEditing(true)}
       />
     );

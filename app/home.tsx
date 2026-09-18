@@ -10,6 +10,7 @@ import { Wordmark } from '@/ui/Wordmark';
 import { Amount } from '@/ui/Amount';
 import { MonthStepper } from '@/ui/MonthStepper';
 import { MonthFlow } from '@/ui/MonthFlow';
+import { Press } from '@/ui/Press';
 import { TabBar } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { BalanceCurve } from '@/ui/chart/BalanceCurve';
@@ -18,6 +19,7 @@ import { DebtLadder } from '@/ui/chart/DebtLadder';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
 import { useLedger } from '@/state/ledger';
+import { useNav } from '@/lib/nav';
 import { lookFor } from '@/domain/category';
 import {
   dayItems,
@@ -61,6 +63,7 @@ export default function Home() {
 function HomeBody() {
   // One arrival for all four tabs, carrying the direction of the move that produced it.
   const ENTER = useTabEntrance();
+  const go = useNav((s) => s.go);
 
   const ready = useLedger((s) => s.ready);
   const error = useLedger((s) => s.error);
@@ -177,6 +180,7 @@ function HomeBody() {
                   settled: false,
                   overdue: false,
                   occurrence: { seriesId: o.seriesId, scheduled: o.date, accountId: o.accountId },
+                  entryId: null,
                 })),
             }
           : null;
@@ -314,6 +318,16 @@ function HomeBody() {
                   inflowDone={view.curve.inflowDone}
                   closed={view.curve.era === 'past'}
                   delay={420}
+                  /*
+                    A total is the sum of a set of movements, so touching it opens that set: the
+                    ledger, cut to this direction and landed on the month the stepper is pointed at
+                    rather than on today.
+
+                    It is the same tab change the bar performs, carrying where to land, which is
+                    why it goes through `go` and not `push` — arriving at the razão from here has
+                    to leave the owner *on* the razão, with its marker lit, not on a page above it.
+                  */
+                  onOpen={(d) => go('ledger', { at: view.curve.from, focus: d })}
                 />
               </Reveal>
 
@@ -441,32 +455,63 @@ function DayRows({ items }: { items: DayItem[] }) {
   return (
     <View style={styles.dayList}>
       {items.map((it, i) => (
-        <View key={`${it.title}-${i}`} style={styles.dayRow}>
-          <View style={styles.dayName}>
-            <Txt variant="body" t="ink" numberOfLines={1}>
-              {it.title}
-            </Txt>
-            <Txt variant="micro" t={it.overdue ? 'warning' : 'faint'} numberOfLines={1}>
-              {it.category}
-              {/* Late is not the same news as expected. And an inflow that never arrived is not
-                  overdue in the owner's sense — nobody owes it to themselves. */}
-              {it.settled
-                ? ''
-                : it.overdue
-                  ? it.direction === 'in'
-                    ? ' · não recebido'
-                    : ' · vencido'
-                  : ' · previsto'}
-            </Txt>
-          </View>
-          <Amount
-            cents={it.direction === 'out' ? -it.amountCents : it.amountCents}
-            size="body"
-            tone={it.direction === 'out' ? 'negative' : 'positive'}
-          />
-        </View>
+        <DayRow key={`${it.title}-${i}`} item={it} />
       ))}
     </View>
+  );
+}
+
+/**
+ * One named movement, and the way to act on it.
+ *
+ * A row that names a bill and will not open it is the screen describing something it refuses to
+ * hand over. Where it leads depends on what it is, and the two cases are exclusive by
+ * construction: a forecast goes to the rule that produced it, which is where "já recebi" lives; a
+ * lançamento already recorded goes to itself, in the screen that edits one.
+ *
+ * A forecast with no `occurrence` — there is no such row today — would have nowhere to go, so it
+ * stays a readout rather than a control that does nothing.
+ */
+function DayRow({ item: it }: { item: DayItem }) {
+  const to = it.occurrence
+    ? ({ pathname: '/recorrencia', params: { id: it.occurrence.seriesId } } as const)
+    : it.entryId
+      ? ({ pathname: '/lancar', params: { id: it.entryId } } as const)
+      : null;
+
+  const body = (
+    <View style={styles.dayRow}>
+      <View style={styles.dayName}>
+        <Txt variant="body" t="ink" numberOfLines={1}>
+          {it.title}
+        </Txt>
+        <Txt variant="micro" t={it.overdue ? 'warning' : 'faint'} numberOfLines={1}>
+          {it.category}
+          {/* Late is not the same news as expected. And an inflow that never arrived is not
+              overdue in the owner's sense — nobody owes it to themselves. */}
+          {it.settled
+            ? ''
+            : it.overdue
+              ? it.direction === 'in'
+                ? ' · não recebido'
+                : ' · vencido'
+              : ' · previsto'}
+        </Txt>
+      </View>
+      <Amount
+        cents={it.direction === 'out' ? -it.amountCents : it.amountCents}
+        size="body"
+        tone={it.direction === 'out' ? 'negative' : 'positive'}
+      />
+    </View>
+  );
+
+  if (!to) return body;
+
+  return (
+    <Press onPress={() => router.push(to)} accessibilityLabel={`Abrir ${it.title}`}>
+      {body}
+    </Press>
   );
 }
 

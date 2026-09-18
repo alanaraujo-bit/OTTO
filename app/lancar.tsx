@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import Animated, { FadeIn } from 'react-native-reanimated';
@@ -56,7 +56,12 @@ const MAX_CENTS = 99_999_999;
  */
 export default function Lancar() {
   const snack = useSnackbar();
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, settlesSeries, settlesDate } = useLocalSearchParams<{
+    id?: string;
+    /** A forecast to settle, named by the screen that sent us here. See `requested` below. */
+    settlesSeries?: string;
+    settlesDate?: string;
+  }>();
   const accounts = useLedger((s) => s.accounts);
   const entries = useLedger((s) => s.entries);
   const series = useLedger((s) => s.series);
@@ -236,6 +241,52 @@ export default function Lancar() {
     return project(series, from, to, settled(entries), deferrals).filter((o) => o.direction === direction);
   }, [existing, series, entries, deferrals, direction]);
 
+  /**
+   * A forecast the owner asked to settle from somewhere else — the razão's swipe, a rule's own
+   * screen.
+   *
+   * Those two places used to write the settlement themselves, at the figure the rule predicted.
+   * That is right for the salary that lands exactly as written and wrong for every bonus, every
+   * bill that came in higher, every month the number simply differs — and the owner had no way to
+   * say so except to record it and then go delete the copy the rule made. So they send the
+   * occurrence here instead, where there is a keypad.
+   *
+   * Resolved from the params rather than picked out of `openNow`, which only reaches to the end of
+   * the current month: a bill due in November is a perfectly ordinary thing to settle early, and it
+   * would not be in that list to preselect from.
+   */
+  const requested = useMemo(() => {
+    if (!settlesSeries || !settlesDate) return null;
+    const d = parseDay(settlesDate);
+    const from = dayKey(new Date(d.getFullYear(), d.getMonth(), 1));
+    const to = dayKey(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+    return (
+      project(series, from, to, settled(entries), deferrals).find(
+        (o) => o.seriesId === settlesSeries && o.date === settlesDate,
+      ) ?? null
+    );
+  }, [settlesSeries, settlesDate, series, entries, deferrals]);
+
+  /*
+   * Applied once. After this the form belongs to the owner — re-running it would snap the figure
+   * they are in the middle of retyping back to the rule's, which is the one thing this whole
+   * change exists to stop.
+   */
+  const filled = useRef(false);
+  useEffect(() => {
+    if (filled.current || !requested) return;
+    filled.current = true;
+    // Direction goes in the same commit as `settles`, or the effect below reads the form's default
+    // `'out'` against an `'in'` occurrence and clears the selection on the first frame.
+    setDirection(requested.direction);
+    setCents(requested.amountCents);
+    setTitle(requested.title);
+    setCategory(requested.category);
+    // Where the rule already says it lands, which is the reason `Occurrence` carries an account.
+    setAccountId(requested.accountId);
+    setSettles(requested);
+  }, [requested]);
+
   // A chosen occurrence whose direction the owner then flipped is no longer the one they meant.
   useEffect(() => {
     if (settles && settles.direction !== direction) setSettles(null);
@@ -413,7 +464,13 @@ export default function Lancar() {
           Absent unless there is something outstanding in this direction, this month. A row that is
           always there, mostly empty, is the furniture this app keeps arguing against.
         */}
-        {openNow.length > 0 ? (
+        {/*
+          Present when there is something to choose, and also when the choice was already made for
+          us. A settlement sent in from the razão can name an occurrence further out than this
+          month, which `openNow` does not reach — without this the owner would meet a form filled
+          with a figure and no statement of what Salvar is about to retire.
+        */}
+        {openNow.length > 0 || settles ? (
           <Reveal index={2} {...ENTER} rise={0}>
             <Txt variant="micro" f="sansMedium" t="muted" style={styles.groupLabel}>
               {direction === 'in' ? 'JÁ RECEBI' : 'JÁ PAGUEI'}
@@ -423,7 +480,10 @@ export default function Lancar() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.chips}
             >
-              {openNow.map((o) => (
+              {(settles && !openNow.some((o) => o.seriesId === settles.seriesId && o.date === settles.date)
+                ? [settles, ...openNow]
+                : openNow
+              ).map((o) => (
                 <Chip
                   key={o.seriesId + '@' + o.date}
                   label={`${o.title} · dia ${Number(o.date.slice(8))}`}
