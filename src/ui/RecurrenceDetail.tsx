@@ -13,6 +13,7 @@ import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
 import { dayKey, parseDay } from '@/domain/projection';
 import { commitmentFor } from '@/domain/commitments';
+import { hasOverrides } from '@/domain/installments';
 import { brlShort } from '@/domain/money';
 import type { DebtHistory } from '@/domain/settlement';
 import type { Occurrence, Series } from '@/domain/model';
@@ -101,7 +102,10 @@ export function RecurrenceDetail({
           <View style={styles.detailRule} />
           <View style={styles.detailFacts}>
             {debt ? (
-              <DetailFact label="cada parcela" value={<Amount cents={series.amountCents} size="body" tone="muted" />} />
+              <DetailFact
+                label="cada parcela"
+                value={hasOverrides(series.installmentAmounts) ? <Txt variant="label" t="muted">varia</Txt> : <Amount cents={series.amountCents} size="body" tone="muted" />}
+              />
             ) : (
               <DetailFact label="por ano" value={brlShort(commitment.yearCents)} />
             )}

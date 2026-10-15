@@ -24,6 +24,11 @@ import {
 } from '../src/domain/projection.ts';
 import { settled, occurrenceKey, numbered, debtHistory } from '../src/domain/settlement.ts';
 import { NO_DEFERRALS, deferralMap } from '../src/domain/deferral.ts';
+import {
+  normalizeOverrides,
+  pinPaidInstallments,
+  sumInstallments,
+} from '../src/domain/installments.ts';
 
 /*
  * The engine takes the deferrals explicitly — deliberately, so that no caller can forget them and
@@ -152,6 +157,59 @@ check('a debt stops at its installment count', () => {
   assert.deepEqual(
     o.map((x) => x.installment.n),
     [1, 2, 3],
+  );
+});
+
+check('uma parcela personalizada aparece no mes certo, e o total bate', () => {
+  // 13 × R$100 + 1 × R$400: the 14th installment is the big one.
+  const d = monthly({
+    kind: 'debt',
+    amountCents: 10000,
+    totalCount: 14,
+    paidCount: 0,
+    startDate: '2026-01-01',
+    installmentAmounts: { 14: 40000 },
+  });
+  // Fourteen installments from January 2026 run to February 2027.
+  const o = occurrences(d, '2026-01-01', '2027-03-31');
+  assert.equal(o.length, 14);
+  assert.equal(o[0].amountCents, 10000);
+  assert.equal(o[13].installment.n, 14);
+  assert.equal(o[13].amountCents, 40000);
+  assert.equal(sumInstallments(10000, d.installmentAmounts, 1, 14), 170000);
+  assert.equal(commitmentFor(d, '2026-01-15').remaining.cents, 170000);
+  const status = debtStatus([{ ...d, paidCount: 13 }]);
+  assert.equal(status[0].remainingCents, 40000, 'after 13 paid, only the 400 is left');
+});
+
+check('reduzir o total apaga a personalizacao que ficou para tras', () => {
+  assert.equal(normalizeOverrides(10000, 13, { 14: 40000 }), null, 'key 14 is past a 13-installment debt');
+  assert.deepEqual(normalizeOverrides(10000, 14, { 14: 40000, 3: 10000, 5: 0, 6: null }), { 14: 40000 }, 'equal-to-base, zero and empty are not overrides');
+  assert.equal(normalizeOverrides(10000, 14, {}), null);
+});
+
+check('mudar o valor padrao nao revaloriza as parcelas ja pagas', () => {
+  // 8 of 10 paid at R$100. Raising the standard to R$120 must leave 1..8 at R$100.
+  const pinned = pinPaidInstallments(
+    { amountCents: 10000, installmentAmounts: null, paidCount: 8 },
+    { amountCents: 12000, overrides: null },
+  );
+  assert.deepEqual(pinned, { 1: 10000, 2: 10000, 3: 10000, 4: 10000, 5: 10000, 6: 10000, 7: 10000, 8: 10000 });
+  assert.equal(sumInstallments(12000, pinned, 1, 10), 8 * 10000 + 2 * 12000);
+  // A paid installment the owner had already priced keeps that figure through the pin.
+  assert.deepEqual(
+    pinPaidInstallments({ amountCents: 10000, installmentAmounts: { 2: 15000 }, paidCount: 2 }, { amountCents: 10000, overrides: null }),
+    { 2: 15000 },
+  );
+  // Nothing moved, so nothing is pinned.
+  assert.equal(
+    pinPaidInstallments({ amountCents: 10000, installmentAmounts: null, paidCount: 2 }, { amountCents: 10000, overrides: null }),
+    null,
+  );
+  // Installments paid by this very save are not pinned to a figure nobody paid.
+  assert.equal(
+    pinPaidInstallments({ amountCents: 10000, installmentAmounts: null, paidCount: 0 }, { amountCents: 12000, overrides: null }),
+    null,
   );
 });
 

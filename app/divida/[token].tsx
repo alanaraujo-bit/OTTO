@@ -16,6 +16,7 @@ import { useSession } from '@/lib/auth/session';
 import { useLedger } from '@/state/ledger';
 import { useSnackbar } from '@/ui/Snackbar';
 import { parseDay } from '@/domain/projection';
+import { hasOverrides, sumInstallments } from '@/domain/installments';
 import { ApiError } from '@/lib/api';
 
 const REFRESH_MS = 5_000;
@@ -172,7 +173,7 @@ export default function SharedDebt() {
               </Txt>
               <Txt variant="title" f="sansSemibold" style={styles.title}>{debt.title}</Txt>
               <Amount
-                cents={(debt.totalCount - debt.paidCount) * debt.amountCents}
+                cents={sumInstallments(debt.amountCents, debt.installmentAmounts, debt.paidCount + 1, debt.totalCount)}
                 size="hero"
                 tone="ink"
               />
@@ -206,7 +207,14 @@ export default function SharedDebt() {
                 </View>
               )}
               <View style={styles.facts}>
-                <Fact label="cada parcela" value={<Amount cents={debt.amountCents} size="body" tone="muted" />} />
+                <Fact
+                  label="cada parcela"
+                  value={
+                    hasOverrides(debt.installmentAmounts)
+                      ? <Txt variant="label" t="muted">varia</Txt>
+                      : <Amount cents={debt.amountCents} size="body" tone="muted" />
+                  }
+                />
                 <Fact label="próximo dia" value={`${debt.dayOfMonth}`} />
                 <Fact label="termina" value={finishes} last />
               </View>

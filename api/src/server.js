@@ -92,6 +92,13 @@ function text(value, max = 140) {
   return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max ? value.trim() : null;
 }
 
+/** Stored overrides that still name an installment of a debt `totalCount` long; null when none do. */
+function carriedOverrides(stored, totalCount) {
+  if (!stored) return null;
+  const kept = Object.fromEntries(Object.entries(stored).filter(([key]) => Number(key) >= 1 && Number(key) <= totalCount));
+  return Object.keys(kept).length > 0 ? kept : null;
+}
+
 function ledger(value) {
   if (!value || !Array.isArray(value.accounts) || !Array.isArray(value.series) || !Array.isArray(value.entries)) return null;
   if (value.accounts.length > 100 || value.series.length > 2_000 || value.entries.length > 20_000) return null;
@@ -107,6 +114,16 @@ function ledger(value) {
     if (!Number.isInteger(item.paidCount) || item.paidCount < 0) return null;
     if (item.kind === 'debt' &&
       (!Number.isInteger(item.totalCount) || item.totalCount < 1 || item.paidCount > item.totalCount)) return null;
+    // Optional, like caps: null or absent means every installment costs the standard amount. Only a
+    // debt has installments to customise, and a key past the count would be an installment that does
+    // not exist — the client prunes both before it sends, so a refusal here means a broken client.
+    if (item.installmentAmounts != null) {
+      if (item.kind !== 'debt' || typeof item.installmentAmounts !== 'object' || Array.isArray(item.installmentAmounts)) return null;
+      for (const [key, cents] of Object.entries(item.installmentAmounts)) {
+        if (!/^\d+$/.test(key) || Number(key) < 1 || Number(key) > item.totalCount) return null;
+        if (!Number.isSafeInteger(cents) || cents <= 0) return null;
+      }
+    }
     if (seriesIds.has(item.id)) return null;
     if (item.counterparty != null && !text(item.counterparty, 80)) return null;
     if (item.linkedShareToken != null && !text(item.linkedShareToken, 100)) return null;
@@ -280,6 +297,9 @@ async function migrate() {
     CREATE UNIQUE INDEX IF NOT EXISTS one_active_share_per_debt
       ON debt_shares (owner_user_id, source_series_id) WHERE revoked_at IS NULL;
     CREATE INDEX IF NOT EXISTS debt_shares_by_token ON debt_shares (token) WHERE revoked_at IS NULL;
+    -- Sparse one-based installment overrides, { "14": 40000 }. NULL means every installment is the
+    -- standard amount. Added after the table existed, so it is an ALTER and not a column above.
+    ALTER TABLE series ADD COLUMN IF NOT EXISTS installment_amounts JSONB;
   `);
 }
 
@@ -299,6 +319,9 @@ async function readLedger(userId) {
         to_char(COALESCE(source.end_date, local.end_date), 'YYYY-MM-DD') AS "endDate",
         COALESCE(source.total_count, local.total_count) AS "totalCount",
         COALESCE(source.paid_count, local.paid_count) AS "paidCount",
+        -- Not COALESCE, on purpose: a source that has reset to standard amounts stores NULL, and COALESCE
+        -- would fall through to the recipient's stale copy and resurrect overrides the owner removed.
+        CASE WHEN source.id IS NOT NULL THEN source.installment_amounts ELSE local.installment_amounts END AS "installmentAmounts",
         COALESCE(owner.name, local.counterparty) AS counterparty,
         local.linked_share_token AS "linkedShareToken"
       FROM series local
@@ -330,11 +353,25 @@ async function replaceLedger(userId, next) {
       'SELECT * FROM debt_shares WHERE owner_user_id = $1 AND revoked_at IS NULL',
       [userId],
     );
+    // Read before the delete, for the same reason as the shares above: every PUT deletes and reinserts
+    // every series row, so an install too old to send `installmentAmounts` would otherwise erase every
+    // customised installment its owner has. Absent is not empty — see the insert below.
+    const storedOverrides = new Map(
+      (await client.query('SELECT id, installment_amounts AS "installmentAmounts" FROM series WHERE user_id = $1', [userId]))
+        .rows.map((row) => [row.id, row.installmentAmounts]),
+    );
     await client.query('DELETE FROM entries WHERE user_id = $1', [userId]);
     await client.query('DELETE FROM series WHERE user_id = $1', [userId]);
     await client.query('DELETE FROM accounts WHERE user_id = $1', [userId]);
     for (const item of next.accounts) await client.query('INSERT INTO accounts (id,user_id,name,kind,opening_cents,closing_day,due_day,limit_cents) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [item.id, userId, item.name, item.kind, item.openingCents, item.closingDay, item.dueDay, item.limitCents]);
-    for (const item of next.series) await client.query('INSERT INTO series (id,user_id,kind,title,category,account_id,amount_cents,direction,day_of_month,start_date,end_date,total_count,paid_count,counterparty,linked_share_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [item.id,userId,item.kind,item.title,item.category,item.accountId,item.amountCents,item.direction,item.dayOfMonth,item.startDate,item.endDate,item.totalCount,item.paidCount,item.counterparty ?? null,item.linkedShareToken ?? null]);
+    for (const item of next.series) {
+      // `undefined` means the key was absent: an older build. Only then is the stored value carried
+      // forward, pruned to the new count. `null` is the client saying "standard amounts" and is kept.
+      const overrides = item.installmentAmounts !== undefined
+        ? item.installmentAmounts
+        : carriedOverrides(storedOverrides.get(item.id), item.kind === 'debt' ? item.totalCount : 0);
+      await client.query('INSERT INTO series (id,user_id,kind,title,category,account_id,amount_cents,direction,day_of_month,start_date,end_date,total_count,paid_count,counterparty,linked_share_token,installment_amounts) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)', [item.id,userId,item.kind,item.title,item.category,item.accountId,item.amountCents,item.direction,item.dayOfMonth,item.startDate,item.endDate,item.totalCount,item.paidCount,item.counterparty ?? null,item.linkedShareToken ?? null,overrides == null ? null : JSON.stringify(overrides)]);
+    }
     const survivingDebts = new Set(next.series.filter((item) => item.kind === 'debt').map((item) => item.id));
     for (const share of activeShares.rows) {
       if (!survivingDebts.has(share.source_series_id)) continue;
@@ -384,7 +421,8 @@ async function publicShare(token) {
       owner.name AS "ownerName", source.title, source.category,
       source.amount_cents AS "amountCents", source.direction, source.day_of_month AS "dayOfMonth",
       to_char(source.start_date, 'YYYY-MM-DD') AS "startDate",
-      source.total_count AS "totalCount", source.paid_count AS "paidCount"
+      source.total_count AS "totalCount", source.paid_count AS "paidCount",
+      source.installment_amounts AS "installmentAmounts"
     FROM debt_shares share
     JOIN users owner ON owner.id = share.owner_user_id
     JOIN series source ON source.user_id = share.owner_user_id AND source.id = share.source_series_id

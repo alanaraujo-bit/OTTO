@@ -22,10 +22,16 @@ import type { Cents } from './money';
 import { landsOn, monthOf } from './deferral';
 import { keyOf, settled } from './settlement';
 import { isSpend } from './spend';
+import { installmentCents, sumInstallments } from './installments';
 
 /** Plain local-time day keys. Everything downstream compares these as strings. */
 export const dayKey = (d: Date) => format(d, 'yyyy-MM-dd');
 export const parseDay = (s: string) => parseISO(s);
+
+/** What installment `n` (one-based) of a series costs. Only debts can differ from the standard amount. */
+export function installmentAmount(series: Series, n: number): Cents {
+  return series.kind === 'debt' ? installmentCents(series.amountCents, series.installmentAmounts, n) : series.amountCents;
+}
 
 /**
  * Expand one series into the occurrences that fall inside `[from, to]`.
@@ -92,7 +98,7 @@ export function occurrences(series: Series, from: string, to: string): Occurrenc
         on: dayKey(when),
         title: series.title,
         category: series.category,
-        amountCents: series.amountCents,
+        amountCents: installmentAmount(series, elapsed + 1),
         direction: series.direction,
         accountId: series.accountId,
         installment:
@@ -618,6 +624,24 @@ export function spendByCategory(
     .sort((a, b) => b.cents - a.cents);
 }
 
+/**
+ * Where the money came from in the same window — actual inflow only, by category.
+ *
+ * The mirror of `spendByCategory`, and it follows the same rule about projections: money that is
+ * expected next week is not received yet, so it does not belong on a chart that reads as what
+ * happened.
+ */
+export function incomeByCategory(entries: Entry[], from: string, to: string): CategoryTotal[] {
+  const totals = new Map<string, Cents>();
+  for (const e of entries) {
+    if (e.direction !== 'in' || e.date < from || e.date > to) continue;
+    totals.set(e.category, (totals.get(e.category) ?? 0) + e.amountCents);
+  }
+  return [...totals.entries()]
+    .map(([category, cents]) => ({ category, cents }))
+    .sort((a, b) => b.cents - a.cents);
+}
+
 export interface DebtStatus {
   series: Series;
   paid: number;
@@ -632,13 +656,12 @@ export function debtStatus(series: Series[]): DebtStatus[] {
   return series
     .filter((s): s is Series & { totalCount: number } => s.kind === 'debt' && s.totalCount != null)
     .map((s) => {
-      const left = Math.max(0, s.totalCount - s.paidCount);
       const start = startOfMonth(parseDay(s.startDate));
       return {
         series: s,
         paid: s.paidCount,
         total: s.totalCount,
-        remainingCents: left * s.amountCents,
+        remainingCents: sumInstallments(s.amountCents, s.installmentAmounts, s.paidCount + 1, s.totalCount),
         finishes: dayKey(addMonths(start, s.totalCount - 1)),
       };
     })

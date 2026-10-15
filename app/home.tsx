@@ -1,21 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { router } from 'expo-router';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { useAnimatedScrollHandler, useSharedValue } from 'react-native-reanimated';
 import { addMonths, format, startOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
 import { Wordmark } from '@/ui/Wordmark';
 import { Amount } from '@/ui/Amount';
-import { MonthStepper } from '@/ui/MonthStepper';
+import { MonthSwipe } from '@/ui/MonthSwipe';
 import { MonthFlow } from '@/ui/MonthFlow';
 import { Press } from '@/ui/Press';
 import { TabBar } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { BalanceCurve } from '@/ui/chart/BalanceCurve';
-import { CategoryDonut, type DonutSlice } from '@/ui/chart/CategoryDonut';
+import { type DonutSlice } from '@/ui/chart/CategoryDonut';
+import { FlowPager } from '@/ui/chart/FlowPager';
 import { DebtLadder } from '@/ui/chart/DebtLadder';
+import { PaceBars } from '@/ui/chart/PaceBars';
+import { RuleBars } from '@/ui/chart/RuleBars';
+import { CapRule } from '@/ui/chart/CapRule';
+import { BalanceTrail } from '@/ui/chart/BalanceTrail';
+import { SeenReveal } from '@/ui/SeenReveal';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
 import { useLedger } from '@/state/ledger';
@@ -25,15 +31,21 @@ import {
   dayItems,
   dayKey,
   debtStatus,
+  incomeByCategory,
   monthCurve,
   parseDay,
   project,
   spendByCategory,
+  type CategoryTotal,
   type DayItem,
 } from '@/domain/projection';
 import { settled } from '@/domain/settlement';
-import { brlDelta, brlShort } from '@/domain/money';
+import { brlDelta, brlShort, type Cents } from '@/domain/money';
 import { paymentSeries } from '@/domain/spend';
+import { capReadings } from '@/domain/cap';
+import { categoryPace, MIN_BASIS, spendPace } from '@/domain/analysis';
+import { largestSpends, weekdayRhythm } from '@/domain/rhythm';
+import type { Entry } from '@/domain/model';
 
 /**
  * Where do I stand.
@@ -76,6 +88,17 @@ function HomeBody() {
   const deferrals = useLedger((s) => s.deferralsBySlot);
 
   const [plotWidth, setPlotWidth] = useState(0);
+
+  // The scroll position and the viewport height, on the UI thread. Each section below the fold reads
+  // them to know when the owner has scrolled to it (see SeenReveal), so nothing re-renders on scroll.
+  const scrollY = useSharedValue(0);
+  const viewH = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler((e) => {
+    scrollY.value = e.contentOffset.y;
+  });
+  const onViewport = (e: LayoutChangeEvent) => {
+    viewH.value = e.nativeEvent.layout.height;
+  };
 
   useEffect(() => {
     void load();
@@ -125,39 +148,14 @@ function HomeBody() {
         ? []
         : spendByCategory(entries, spendFrom, spendTo, paymentSeries(series));
 
-    /*
-     * Four named categories and a remainder, not five.
-     *
-     * The cut is the palette's, and it is honest about it: five hues survived colour-vision
-     * validation on this ground, and "Outros" is not one of them — it is the leftover, drawn in
-     * `inkFaint` because it has no identity to carry. Four named arcs plus a neutral is also simply
-     * a better ring to read than six competing ones, so the constraint and the design agree.
-     */
-    const top = spend.slice(0, 4);
-    const rest = spend.slice(4).reduce((n, c) => n + c.cents, 0);
     const capOf = (name: string) =>
       caps.find((c) => c.category.trim().toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'))
         ?.capCents ?? null;
 
-    const categories: DonutSlice[] = [
-      ...top.map((c) => ({
-        category: c.category,
-        ...lookFor(c.category, storedCategories),
-        cents: c.cents,
-        capCents: capOf(c.category),
-      })),
-      ...(rest > 0
-        ? [
-            {
-              category: 'Outros',
-              ...lookFor('Outros', storedCategories),
-              cents: rest,
-              capCents: null,
-              isRest: true,
-            } satisfies DonutSlice,
-          ]
-        : []),
-    ];
+    // Income has no ceilings, so its ring carries no notches — only the composition of what came in.
+    const categories = ringSlices(spend, storedCategories, capOf);
+    const inflow = curve.era === 'future' ? [] : incomeByCategory(entries, spendFrom, spendTo);
+    const incomeSlices = ringSlices(inflow, storedCategories);
 
     // The named slice. In the current month that is today; in a month still ahead it is what the
     // month has committed to, which is the same question asked of a different tense. A closed month
@@ -196,12 +194,62 @@ function HomeBody() {
       curve,
       categories,
       spendTotal: spend.reduce((n, c) => n + c.cents, 0),
+      incomeSlices,
+      incomeTotal: inflow.reduce((n, c) => n + c.cents, 0),
       spendLabel: rolling ? 'últimos 30 dias' : 'gastos do mês',
       slice,
       net,
       debts: debtStatus(series),
     };
   }, [ready, error, accounts, entries, series, caps, storedCategories, deferrals, today, anchor]);
+
+  /**
+   * The readings below the fold. Each one reads the month being looked at, except the ones that only
+   * have an answer for the present — "is this normal" and "how far through the ceilings" compare today
+   * against the owner's own history, so they are read over today and shown only when today's month is
+   * the one on screen. Showing them under another month's name would be a figure the ledger can
+   * contradict.
+   */
+  const below = useMemo(() => {
+    if (!view) return null;
+    const { curve } = view;
+    const payments = paymentSeries(series);
+    const current = curve.era === 'current';
+    const inMonth = curve.era !== 'future';
+    const from = curve.from;
+    const to = current ? today : curve.to;
+
+    const rhythm = inMonth ? weekdayRhythm(entries, payments, from, to) : [];
+    const largest = inMonth ? largestSpends(entries, payments, from, to, 5) : [];
+    const monthOut = inMonth
+      ? spendByCategory(entries, from, to, payments).reduce((n, c) => n + c.cents, 0)
+      : 0;
+
+    const pace = current ? spendPace(entries, series, today, 6) : null;
+    const paceRows = current
+      ? categoryPace(entries, series, today, 6)
+          .slice(0, 5)
+          .map((c) => ({ label: c.category, cents: c.cents, usual: c.usual }))
+      : [];
+    const readings = current ? capReadings(caps, entries, series, today) : [];
+
+    // Six month-ends, the one on screen last. Each is the same curve the hero reads, so the trail and
+    // the figure at the top cannot disagree about where a month closes.
+    const anchorDate = parseDay(from);
+    const trail = [5, 4, 3, 2, 1, 0].map((back) => {
+      const m = dayKey(addMonths(anchorDate, -back));
+      const c = monthCurve(accounts, entries, series, today, deferrals, m);
+      return {
+        key: m,
+        label: format(parseDay(m), 'MMM yy', { locale: ptBR }),
+        cents: c.balanceEnd,
+        era: c.era,
+        from: m,
+      };
+    });
+
+    return { current, inMonth, from, to, rhythm, largest, monthOut, pace, paceRows, readings, trail };
+  }, [view, series, entries, caps, accounts, deferrals, today]);
 
   const onPlot = (e: LayoutChangeEvent) => {
     const w = Math.round(e.nativeEvent.layout.width);
@@ -210,10 +258,13 @@ function HomeBody() {
 
   return (
     <>
-      <ScrollView
+      <Animated.ScrollView
         style={styles.flex}
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        onLayout={onViewport}
       >
         <Reveal index={0} {...ENTER.head}>
           <View style={styles.top}>
@@ -224,141 +275,144 @@ function HomeBody() {
           </View>
         </Reveal>
 
+        {/*
+          The month's figures, and the stepper that names them. Dragging across this block changes the
+          month; the stepper stays put and the figures below it travel with the finger (see MonthSwipe).
+        */}
         <Reveal index={1} {...ENTER.body} rise={0} style={styles.stepper}>
-          <MonthStepper
+          <MonthSwipe
             anchor={anchor}
             today={today}
             era={view?.curve.era ?? 'current'}
             min={bounds.min}
             max={bounds.max}
             onChange={setAnchor}
-          />
+          >
+            {/*
+              Before the ledger is read, the instrument shows a blank readout rather than a skeleton: the
+              hero slot keeps its exact shape and the number lands in place, so nothing jumps. The cold
+              start has to run the sample once, and that pause is the owner's first impression of this
+              screen.
+            */}
+            {!ready && !error ? (
+              <Reveal index={2} {...ENTER.body}>
+                <View style={styles.hero}>
+                  <Txt variant="display" f="monoSemibold" t="faint" tabular>
+                    —
+                  </Txt>
+                  <Txt variant="label" t="faint">
+                    lendo seu razão
+                  </Txt>
+                </View>
+              </Reveal>
+            ) : null}
+
+            {error ? (
+              <Reveal index={2} {...ENTER.body}>
+                <Txt variant="heading" f="sansSemibold" style={styles.head}>
+                  Não consegui ler seus dados.
+                </Txt>
+                <Txt variant="body" t="muted" style={styles.sub}>
+                  {error}
+                </Txt>
+              </Reveal>
+            ) : null}
+
+            {view ? (
+              <>
+                <Reveal index={2} {...ENTER.body}>
+                  <View style={styles.hero}>
+                    <Amount
+                      cents={view.curve.balanceNow}
+                      size="hero"
+                      tone={view.curve.balanceNow < 0 ? 'negative' : 'ink'}
+                    />
+                    <View style={styles.heroRow}>
+                      <Txt variant="label" t="muted">
+                        {view.curve.era === 'current'
+                          ? 'saldo hoje'
+                          : view.curve.era === 'past'
+                            ? 'saldo no fechamento'
+                            : 'saldo ao abrir o mês'}
+                      </Txt>
+                      {view.net !== 0 ? (
+                        <Txt
+                          variant="label"
+                          f="monoMedium"
+                          t={view.net < 0 ? 'negative' : 'positive'}
+                          tabular
+                        >
+                          {brlDelta(view.net)}
+                        </Txt>
+                      ) : null}
+                    </View>
+                  </View>
+                </Reveal>
+
+                <Reveal index={3} {...ENTER.body} rise={0} style={styles.plot}>
+                  <View onLayout={onPlot}>
+                    {plotWidth > 0 ? (
+                      <BalanceCurve curve={view.curve} width={plotWidth} />
+                    ) : null}
+                  </View>
+                </Reveal>
+
+                <Reveal index={4} {...ENTER.body} style={styles.flowBlock}>
+                  <MonthFlow
+                    outflow={view.curve.outflow}
+                    outflowDone={view.curve.outflowDone}
+                    inflow={view.curve.inflow}
+                    inflowDone={view.curve.inflowDone}
+                    closed={view.curve.era === 'past'}
+                    delay={420}
+                    /*
+                      A total is the sum of a set of movements, so touching it opens that set: the
+                      ledger, cut to this direction and landed on the month the stepper is pointed at
+                      rather than on today.
+
+                      It is the same tab change the bar performs, carrying where to land, which is
+                      why it goes through `go` and not `push` — arriving at the razão from here has
+                      to leave the owner *on* the razão, with its marker lit, not on a page above it.
+                    */
+                    onOpen={(d) => go('ledger', { at: view.curve.from, focus: d })}
+                  />
+                </Reveal>
+
+                {/*
+                  The one sentence the arithmetic exists to produce. It is only rendered when it is
+                  true, so it never becomes furniture the owner learns to skip — the month either dips
+                  below zero or this line is not there at all.
+
+                  It sits *after* the two flows rather than between them and the curve, because it is
+                  conditional and they are not: putting a variable-height block above fixed content
+                  would push that content off the first screen exactly in the months where the owner
+                  most needs to see all of it at once.
+                */}
+                {view.curve.trough.balance < 0 ? (
+                  <Reveal index={5} {...ENTER.body}>
+                    <View style={styles.alert}>
+                      <View style={styles.alertRule} />
+                      <Txt variant="body" t="negative">
+                        No dia {view.curve.trough.day} o mês{' '}
+                        {view.curve.era === 'past' ? 'ficou' : 'fica'} negativo em{' '}
+                        {brlShort(view.curve.trough.balance)}.
+                      </Txt>
+                    </View>
+                  </Reveal>
+                ) : null}
+              </>
+            ) : null}
+          </MonthSwipe>
         </Reveal>
-
-        {/*
-          Before the ledger is read, the instrument shows a blank readout rather than a skeleton: the
-          hero slot keeps its exact shape and the number lands in place, so nothing jumps. The cold
-          start has to run the sample once, and that pause is the owner's first impression of this
-          screen.
-        */}
-        {!ready && !error ? (
-          <Reveal index={2} {...ENTER.body}>
-            <View style={styles.hero}>
-              <Txt variant="display" f="monoSemibold" t="faint" tabular>
-                —
-              </Txt>
-              <Txt variant="label" t="faint">
-                lendo seu razão
-              </Txt>
-            </View>
-          </Reveal>
-        ) : null}
-
-        {error ? (
-          <Reveal index={2} {...ENTER.body}>
-            <Txt variant="heading" f="sansSemibold" style={styles.head}>
-              Não consegui ler seus dados.
-            </Txt>
-            <Txt variant="body" t="muted" style={styles.sub}>
-              {error}
-            </Txt>
-          </Reveal>
-        ) : null}
 
         {view ? (
           <>
-            {/*
-              Keyed on the month, so changing it dissolves the readout and re-rules it rather than
-              swapping digits in place. This is the screen's one authored moment: the month is the
-              only thing on it the owner can change, so it is the only thing that gets a transition.
-            */}
-            <Animated.View key={anchor} entering={FadeIn.duration(220)}>
-              <Reveal index={2} {...ENTER.body}>
-                <View style={styles.hero}>
-                  <Amount
-                    cents={view.curve.balanceNow}
-                    size="hero"
-                    tone={view.curve.balanceNow < 0 ? 'negative' : 'ink'}
-                  />
-                  <View style={styles.heroRow}>
-                    <Txt variant="label" t="muted">
-                      {view.curve.era === 'current'
-                        ? 'saldo hoje'
-                        : view.curve.era === 'past'
-                          ? 'saldo no fechamento'
-                          : 'saldo ao abrir o mês'}
-                    </Txt>
-                    {view.net !== 0 ? (
-                      <Txt
-                        variant="label"
-                        f="monoMedium"
-                        t={view.net < 0 ? 'negative' : 'positive'}
-                        tabular
-                      >
-                        {brlDelta(view.net)}
-                      </Txt>
-                    ) : null}
-                  </View>
-                </View>
-              </Reveal>
-
-              <Reveal index={3} {...ENTER.body} rise={0} style={styles.plot}>
-                <View onLayout={onPlot}>
-                  {plotWidth > 0 ? (
-                    <BalanceCurve curve={view.curve} width={plotWidth} />
-                  ) : null}
-                </View>
-              </Reveal>
-
-              <Reveal index={4} {...ENTER.body} style={styles.flowBlock}>
-                <MonthFlow
-                  outflow={view.curve.outflow}
-                  outflowDone={view.curve.outflowDone}
-                  inflow={view.curve.inflow}
-                  inflowDone={view.curve.inflowDone}
-                  closed={view.curve.era === 'past'}
-                  delay={420}
-                  /*
-                    A total is the sum of a set of movements, so touching it opens that set: the
-                    ledger, cut to this direction and landed on the month the stepper is pointed at
-                    rather than on today.
-
-                    It is the same tab change the bar performs, carrying where to land, which is
-                    why it goes through `go` and not `push` — arriving at the razão from here has
-                    to leave the owner *on* the razão, with its marker lit, not on a page above it.
-                  */
-                  onOpen={(d) => go('ledger', { at: view.curve.from, focus: d })}
-                />
-              </Reveal>
-
-              {/*
-                The one sentence the arithmetic exists to produce. It is only rendered when it is
-                true, so it never becomes furniture the owner learns to skip — the month either dips
-                below zero or this line is not there at all.
-
-                It sits *after* the two flows rather than between them and the curve, because it is
-                conditional and they are not: putting a variable-height block above fixed content
-                would push that content off the first screen exactly in the months where the owner
-                most needs to see all of it at once.
-              */}
-              {view.curve.trough.balance < 0 ? (
-                <Reveal index={5} {...ENTER.body}>
-                  <View style={styles.alert}>
-                    <View style={styles.alertRule} />
-                    <Txt variant="body" t="negative">
-                      No dia {view.curve.trough.day} o mês{' '}
-                      {view.curve.era === 'past' ? 'ficou' : 'fica'} negativo em{' '}
-                      {brlShort(view.curve.trough.balance)}.
-                    </Txt>
-                  </View>
-                </Reveal>
-              ) : null}
-            </Animated.View>
 
             {/*
-              Below the fold the entrance stops. Content the owner has to scroll to has already been
-              introduced by the act of scrolling to it, and animating it as well is the scattered
-              effect that makes a screen feel busy rather than alive.
+              Below the fold there is no entrance. Content the owner has to scroll to is introduced by the
+              act of scrolling to it — the sections further down wrap themselves in SeenReveal for exactly
+              that — and animating it on arrival as well is the scattered effect that makes a screen feel
+              busy rather than alive.
             */}
             {view.slice ? (
               <View>
@@ -374,15 +428,29 @@ function HomeBody() {
               </View>
             ) : null}
 
-            {view.categories.length > 0 ? (
+            {view.categories.length > 0 || view.incomeSlices.length > 0 ? (
               <View>
                 <Section label={view.spendLabel} />
-                <CategoryDonut
-                  slices={view.categories}
-                  total={view.spendTotal}
-                  label={view.spendLabel}
+                <FlowPager
+                  centerLabel={view.spendLabel}
                   delay={520}
-                  onSelect={() => router.push('/categorias')}
+                  pages={[
+                    {
+                      key: 'out',
+                      label: 'Saídas',
+                      slices: view.categories,
+                      total: view.spendTotal,
+                      empty: 'Nenhum gasto registrado.',
+                      onSelect: () => router.push('/categorias'),
+                    },
+                    {
+                      key: 'in',
+                      label: 'Entradas',
+                      slices: view.incomeSlices,
+                      total: view.incomeTotal,
+                      empty: 'Nenhuma entrada registrada.',
+                    },
+                  ]}
                 />
               </View>
             ) : null}
@@ -398,13 +466,141 @@ function HomeBody() {
                 ))}
               </View>
             ) : null}
+
+            {below ? (
+              <>
+                {/*
+                  The sections below are each introduced by the scroll that reaches them (SeenReveal),
+                  rather than by the entrance, which has already been spent on the fold above.
+                */}
+                <SeenReveal scrollY={scrollY} viewH={viewH}>
+                  <Section
+                    label="contra o normal"
+                    aside={
+                      below.pace && below.pace.delta !== null ? brlDelta(below.pace.delta) : undefined
+                    }
+                  />
+                  {!below.current ? (
+                    <Txt variant="body" t="faint" style={styles.emptyDay}>
+                      Compara o mês atual com os anteriores, então só existe para hoje.
+                    </Txt>
+                  ) : below.pace && below.pace.usual === null ? (
+                    <Txt variant="body" t="faint" style={styles.emptyDay}>
+                      Ainda não há {MIN_BASIS} meses completos no razão para dizer o que é normal. Hoje
+                      há {below.pace.basis}.
+                    </Txt>
+                  ) : below.paceRows.length === 0 ? (
+                    <Txt variant="body" t="faint" style={styles.emptyDay}>
+                      Nenhum gasto neste mês até hoje.
+                    </Txt>
+                  ) : (
+                    <View style={styles.block}>
+                      <PaceBars data={below.paceRows} />
+                      <Link
+                        label="ver saídas do mês"
+                        onPress={() => go('ledger', { at: below.from, focus: 'out' })}
+                      />
+                    </View>
+                  )}
+                </SeenReveal>
+
+                <SeenReveal scrollY={scrollY} viewH={viewH}>
+                  <Section
+                    label="ritmo por dia da semana"
+                    aside={
+                      below.inMonth && below.rhythm.some((r) => r.cents > 0) ? 'média por dia' : undefined
+                    }
+                  />
+                  {!below.inMonth ? (
+                    <Txt variant="body" t="faint" style={styles.emptyDay}>
+                      Este mês ainda não começou.
+                    </Txt>
+                  ) : below.rhythm.every((r) => r.cents === 0) ? (
+                    <Txt variant="body" t="faint" style={styles.emptyDay}>
+                      Nenhum gasto neste mês ainda.
+                    </Txt>
+                  ) : (
+                    <View style={styles.block}>
+                      <RuleBars data={below.rhythm.map((r) => ({ label: r.label, cents: r.cents }))} />
+                      <Link
+                        label="ver os lançamentos do mês"
+                        onPress={() => go('ledger', { at: below.from, focus: 'out' })}
+                      />
+                    </View>
+                  )}
+                </SeenReveal>
+
+                <SeenReveal scrollY={scrollY} viewH={viewH}>
+                  <Section
+                    label="maiores saídas"
+                    aside={below.monthOut > 0 ? brlShort(below.monthOut) : undefined}
+                  />
+                  {!below.inMonth ? (
+                    <Txt variant="body" t="faint" style={styles.emptyDay}>
+                      Este mês ainda não começou.
+                    </Txt>
+                  ) : below.largest.length === 0 ? (
+                    <Txt variant="body" t="faint" style={styles.emptyDay}>
+                      Nenhuma saída registrada neste mês.
+                    </Txt>
+                  ) : (
+                    <View style={styles.block}>
+                      <DayRows items={below.largest.map(entryItem)} />
+                      <Link
+                        label="ver todas as saídas"
+                        onPress={() => go('ledger', { at: below.from, focus: 'out' })}
+                      />
+                    </View>
+                  )}
+                </SeenReveal>
+
+                <SeenReveal scrollY={scrollY} viewH={viewH}>
+                  <Section label="tetos" />
+                  {!below.current ? (
+                    <Txt variant="body" t="faint" style={styles.emptyDay}>
+                      Os tetos são lidos sobre o mês atual.
+                    </Txt>
+                  ) : below.readings.length === 0 ? (
+                    <View style={styles.block}>
+                      <Txt variant="body" t="faint">
+                        Nenhum teto definido. Um teto avisa quando a categoria está perto do limite.
+                      </Txt>
+                      <Link label="definir tetos" onPress={() => router.push('/tetos')} />
+                    </View>
+                  ) : (
+                    <View style={styles.block}>
+                      {below.readings.map((r) => (
+                        <CapRule key={r.category} reading={r} onPress={() => router.push('/tetos')} />
+                      ))}
+                      <Link label="ver tetos" onPress={() => router.push('/tetos')} />
+                    </View>
+                  )}
+                </SeenReveal>
+
+                <SeenReveal scrollY={scrollY} viewH={viewH}>
+                  <Section label="saldo, últimos seis meses" />
+                  {entries.length === 0 ? (
+                    <Txt variant="body" t="faint" style={styles.emptyDay}>
+                      Sem lançamentos para mostrar o saldo de meses passados.
+                    </Txt>
+                  ) : (
+                    <View style={styles.block}>
+                      <BalanceTrail
+                        months={below.trail}
+                        onOpen={(at) => go('ledger', { at })}
+                      />
+                    </View>
+                  )}
+                </SeenReveal>
+              </>
+            ) : null}
           </>
         ) : null}
 
         {/* Signing out was parked here with a note saying it would move to settings when settings
             existed. It exists, so it moved — the home screen is about money, and the far end of its
             scroll is not a drawer. */}
-      </ScrollView>
+      </Animated.ScrollView>
 
       <TabBar
         active="home"
@@ -440,6 +636,34 @@ function Section({ label, aside }: { label: string; aside?: string }) {
       </View>
     </View>
   );
+}
+
+/**
+ * The way from a reading to what it sums. Every figure in the sections below has one, and it is set
+ * as a plain line under the rows rather than as a control competing with them.
+ */
+function Link({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Press onPress={onPress} haptic="none" outerStyle={styles.link} accessibilityLabel={label}>
+      <Txt variant="micro" f="sansMedium" t="muted">
+        {label}
+      </Txt>
+    </Press>
+  );
+}
+
+/** A recorded purchase, in the shape the day rows draw. It is settled, so it reads as what happened. */
+function entryItem(e: Entry): DayItem {
+  return {
+    title: e.title,
+    category: e.category,
+    amountCents: e.amountCents,
+    direction: 'out',
+    settled: true,
+    overdue: false,
+    occurrence: null,
+    entryId: e.id,
+  };
 }
 
 /** The day, named. Amounts hold their own column because they are tabular and right-aligned. */
@@ -515,6 +739,45 @@ function DayRow({ item: it }: { item: DayItem }) {
   );
 }
 
+/**
+ * The ring's slices for one flow: the four largest named categories, and a remainder.
+ *
+ * Four named categories and a remainder, not five. The cut is the palette's, and it is honest about
+ * it: five hues survived colour-vision validation on this ground, and "Outros" is not one of them — it
+ * is the leftover, drawn in `inkFaint` because it has no identity to carry. Four named arcs plus a
+ * neutral is also simply a better ring to read than six competing ones, so the constraint and the
+ * design agree.
+ *
+ * Only spending has ceilings, so only spending passes `capOf`.
+ */
+function ringSlices(
+  totals: CategoryTotal[],
+  stored: Parameters<typeof lookFor>[1],
+  capOf?: (name: string) => Cents | null,
+): DonutSlice[] {
+  const top = totals.slice(0, 4);
+  const rest = totals.slice(4).reduce((n, c) => n + c.cents, 0);
+  return [
+    ...top.map((c) => ({
+      category: c.category,
+      ...lookFor(c.category, stored),
+      cents: c.cents,
+      capCents: capOf?.(c.category) ?? null,
+    })),
+    ...(rest > 0
+      ? [
+          {
+            category: 'Outros',
+            ...lookFor('Outros', stored),
+            cents: rest,
+            capCents: null,
+            isRest: true,
+          } satisfies DonutSlice,
+        ]
+      : []),
+  ];
+}
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { paddingTop: space.md, paddingBottom: space.xxl },
@@ -553,6 +816,9 @@ const styles = StyleSheet.create({
     paddingTop: space.md,
   },
   sectionLabel: { letterSpacing: 0.8 },
+
+  block: { paddingTop: space.sm },
+  link: { alignSelf: 'flex-start', paddingTop: space.md },
 
   dayList: { paddingTop: space.xs },
   dayRow: {

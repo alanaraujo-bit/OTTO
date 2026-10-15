@@ -1,5 +1,6 @@
 import { addMonths, endOfMonth, startOfMonth } from 'date-fns';
-import { dayKey, occurrences, parseDay } from './projection';
+import { dayKey, installmentAmount, occurrences, parseDay } from './projection';
+import { sumInstallments } from './installments';
 import { signed, type Series } from './model';
 import type { Cents } from './money';
 
@@ -63,7 +64,7 @@ export function commitmentFor(s: Series, today: string): Commitment {
           const start = startOfMonth(parseDay(s.startDate));
           return {
             count: left,
-            cents: left * s.amountCents,
+            cents: sumInstallments(s.amountCents, s.installmentAmounts, s.paidCount + 1, s.totalCount),
             finishes: dayKey(addMonths(start, s.totalCount - 1)),
           };
         })()
@@ -71,7 +72,13 @@ export function commitmentFor(s: Series, today: string): Commitment {
 
   return {
     series: s,
-    monthlyCents: s.amountCents,
+    // A debt's monthly figure is the installment that is next due, which is not the standard amount
+    // once any installment is customised. A finished debt has no next installment, so it costs nothing
+    // per month — and a window-based reading would make a debt that ends mid-horizon look like zero.
+    monthlyCents:
+      s.kind === 'debt'
+        ? s.totalCount != null && s.paidCount >= s.totalCount ? 0 : installmentAmount(s, s.paidCount + 1)
+        : s.amountCents,
     yearCents: window.reduce((n, o) => n + o.amountCents, 0),
     count: window.length,
     remaining,

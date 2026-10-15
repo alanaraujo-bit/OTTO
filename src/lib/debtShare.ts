@@ -1,5 +1,6 @@
 import { api } from './api';
 import { numbered, type DebtHistory } from '@/domain/settlement';
+import type { InstallmentOverrides } from '@/domain/installments';
 
 export interface DebtShareSummary {
   token: string;
@@ -19,6 +20,11 @@ export interface PublicDebtShare {
   startDate: string;
   totalCount: number;
   paidCount: number;
+  /**
+   * Installments the owner priced differently from the standard amount, by one-based number. Absent
+   * on an older server, where every installment is `amountCents` — the same reading as `null`.
+   */
+  installmentAmounts?: InstallmentOverrides | null;
   /**
    * The payments the owner has actually recorded, oldest first.
    *

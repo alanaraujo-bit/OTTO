@@ -61,6 +61,12 @@ export interface Series {
   endDate: string | null;
   /** Debts only: how many installments in total. */
   totalCount: number | null;
+  /**
+   * Debts only: sparse one-based installment amounts, overriding the standard amount. `null` means
+   * every installment is the standard amount — stated explicitly, because on the wire an absent key
+   * means "an older build that does not know this field" and must not clear what is stored.
+   */
+  installmentAmounts?: Record<string, Cents> | null;
   /** Debts only: how many are already paid. */
   paidCount: number;
   /**

@@ -11,6 +11,7 @@ import { Press } from '@/ui/Press';
 import { Button } from '@/ui/Button';
 import { DebtSharePanel } from '@/ui/DebtSharePanel';
 import { RecurrenceDetail } from '@/ui/RecurrenceDetail';
+import { InstallmentEditor } from '@/ui/InstallmentEditor';
 import { Field } from '@/ui/Field';
 import { MoneyField } from '@/ui/MoneyField';
 import { KeyboardAwareScrollView } from '@/ui/KeyboardAwareScrollView';
@@ -22,6 +23,11 @@ import { useLedger } from '@/state/ledger';
 import { deleteSeries, insertSeries, updateSeries } from '@/db/repo';
 import { pickerOrder } from '@/domain/category';
 import { dayKey, nextOpen, parseDay } from '@/domain/projection';
+import {
+  hasOverrides,
+  normalizeOverrides,
+  pinPaidInstallments,
+} from '@/domain/installments';
 import { commitmentFor } from '@/domain/commitments';
 import { debtHistory, type DebtHistory } from '@/domain/settlement';
 import { brlShort } from '@/domain/money';
@@ -94,6 +100,10 @@ function Form() {
   const [day, setDay] = useState('');
   const [total, setTotal] = useState('');
   const [paid, setPaid] = useState('');
+  // Keyed by one-based installment number, as typed. A zero may sit here while the owner is typing;
+  // the derived `pinned` view below is what the editor shows and what the save normalises.
+  const [overrides, setOverrides] = useState<Record<string, number>>({});
+  const [customising, setCustomising] = useState(false);
   const [saving, setSaving] = useState(false);
   const [armed, setArmed] = useState(false);
   // A rule that already exists opens as a reading. Creating one has nothing to read, so the form is
@@ -168,12 +178,44 @@ function Form() {
     setDay(String(existing.dayOfMonth));
     setTotal(existing.totalCount == null ? '' : String(existing.totalCount));
     setPaid(String(existing.paidCount));
+    setOverrides({ ...(existing.installmentAmounts ?? {}) });
   }, [existing]);
 
   const cents = amount ?? 0;
   const dayOfMonth = num(day, 1, 31);
   const totalCount = num(total, 1, 480);
   const paidCount = num(paid, 0, totalCount ?? 480) ?? 0;
+
+  /*
+   * The overrides as they will be read, with the installments already paid held at what they cost.
+   *
+   * Changing the standard amount of a debt would otherwise revalue the installments already paid —
+   * they follow the standard — and the total would stop matching the money that left. `pinned` is
+   * derived rather than stored, so it tracks the amount as it is typed; the owner's own edits are
+   * kept in `overrides` and pinning only fills the paid ones they have not touched.
+   */
+  const pinned = useMemo<Record<string, number>>(() => {
+    if (!existing) return overrides;
+    return (
+      pinPaidInstallments(
+        {
+          amountCents: existing.amountCents,
+          installmentAmounts: existing.installmentAmounts,
+          paidCount: existing.paidCount,
+        },
+        { amountCents: cents, overrides },
+      ) ?? {}
+    );
+  }, [existing, overrides, cents]);
+
+  // A typed zero is the one value the editor shows and the save refuses — it is not an installment
+  // that costs nothing, and "apague para voltar ao padrão" is the way to say standard.
+  const zeroedOverride =
+    shape === 'debt' && totalCount !== null &&
+    Object.entries(pinned).some(([key, value]) => value === 0 && Number(key) <= totalCount);
+
+  // What the summary beside the "personalizar" action reports: the installments that are not standard.
+  const flagged = totalCount !== null ? normalizeOverrides(cents, totalCount, pinned) : null;
 
   const account = existing?.accountId ?? accounts.find((a) => a.kind !== 'card')?.id ?? '';
 
@@ -185,7 +227,7 @@ function Form() {
     title.trim() !== '' &&
     cents > 0 &&
     dayOfMonth !== null &&
-    (shape !== 'debt' || (totalCount !== null && paidCount <= totalCount));
+    (shape !== 'debt' || (totalCount !== null && paidCount <= totalCount && !zeroedOverride));
 
   /** The draft as the engine would see it, so the yearly figure is the real one and not an estimate. */
   const preview = useMemo(() => {
@@ -222,6 +264,20 @@ function Form() {
       totalCount: shape === 'debt' ? totalCount : null,
       paidCount: shape === 'debt' ? paidCount : 0,
       /*
+       * Explicit null, never absent. On the wire an absent key means "a build that does not know this
+       * field" and the server keeps what it has; null is the owner saying "every installment is the
+       * standard amount", which must be able to stick.
+       *
+       * A shared debt keeps the owner's figures untouched: what the other person owes is the source's
+       * to say, and the server reads it from there regardless of what this device sends.
+       */
+      installmentAmounts:
+        shape !== 'debt' || totalCount === null
+          ? null
+          : existing?.linkedShareToken
+            ? (existing.installmentAmounts ?? null)
+            : normalizeOverrides(cents, totalCount, pinned),
+      /*
        * Empty means null, not ''.
        *
        * Naming the other side is optional — a parcelamento no cartão is a debt with nobody on the
@@ -233,7 +289,7 @@ function Form() {
       linkedShareToken: existing?.linkedShareToken ?? null,
     };
     return { draft, commitment: commitmentFor(draft, today) };
-  }, [valid, shape, debtDirection, title, counterparty, category, cents, dayOfMonth, totalCount, paidCount, existing, account]);
+  }, [valid, shape, debtDirection, title, counterparty, category, cents, dayOfMonth, totalCount, paidCount, existing, account, pinned]);
 
   const save = async () => {
     if (!preview || saving) return;
@@ -413,6 +469,36 @@ function Form() {
               />
             </Reveal>
           </>
+        ) : null}
+
+        {shape === 'debt' && totalCount !== null && !existing?.linkedShareToken ? (
+          <View style={styles.customise}>
+            <Press
+              onPress={() => setCustomising((open) => !open)}
+              style={styles.customiseHead}
+              accessibilityLabel={customising ? 'Ocultar parcelas' : 'Personalizar parcelas'}
+              accessibilityState={{ selected: customising }}
+            >
+              <Txt variant="label" f="sansMedium" t={customising ? 'ink' : 'muted'}>
+                {customising ? 'Ocultar parcelas' : 'Personalizar parcelas'}
+              </Txt>
+              <Txt variant="micro" t="faint">
+                {hasOverrides(flagged)
+                  ? `${Object.keys(flagged ?? {}).length} fora do padrão`
+                  : 'todas no valor da parcela'}
+              </Txt>
+            </Press>
+            {customising ? (
+              <InstallmentEditor
+                base={cents}
+                total={totalCount}
+                paid={paidCount}
+                startDate={existing?.startDate ?? startDateFor('debt', paidCount, today)}
+                value={pinned}
+                onChange={setOverrides}
+              />
+            ) : null}
+          </View>
         ) : null}
 
         <Reveal index={5} {...ENTER} rise={0}>
@@ -602,6 +688,9 @@ const styles = StyleSheet.create({
     borderColor: color.hairline,
   },
   chipOn: { borderColor: color.hairlineStrong, backgroundColor: color.surface },
+
+  customise: { paddingTop: space.xl },
+  customiseHead: { minHeight: 48, justifyContent: 'center', gap: space.xs },
 
   consequence: { paddingTop: space.xl },
   linkedNotice: { paddingTop: space.xl },
