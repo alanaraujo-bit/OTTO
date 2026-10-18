@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { Pool } from 'pg';
+import { assistantConfig, createAssistant, migrateAssistant, openaiClient } from './assistant.js';
 
 const port = Number(process.env.PORT || 3333);
 const databaseUrl = process.env.DATABASE_URL;
@@ -566,6 +567,10 @@ async function route(request, response) {
     await pool.query('UPDATE debt_shares SET revoked_at = now() WHERE owner_user_id = $1 AND source_series_id = $2 AND revoked_at IS NULL', [claims.sub, decodeURIComponent(debtShareMatch[1])]);
     return json(response, 200, { ok: true });
   }
+  if (request.method === 'POST' && url.pathname === '/v1/assistant') {
+    const answer = await assistant(claims.sub, await body(request));
+    return json(response, answer.status, answer.body);
+  }
   if (request.method === 'GET' && url.pathname === '/v1/ledger') return json(response, 200, await readLedger(claims.sub));
   if (request.method === 'PUT' && url.pathname === '/v1/ledger') {
     const next = ledger(await body(request)); if (!next) return fail(response, 400, 'Razão inválido.');
@@ -587,6 +592,11 @@ async function route(request, response) {
 }
 
 await migrate();
+await migrateAssistant(pool);
+// Built once at boot. With no OPENAI_API_KEY the route still answers — with a 503 the app shows as
+// "assistente ainda não configurado" — so a missing key never takes the ledger down with it.
+const assistantSettings = assistantConfig();
+const assistant = createAssistant({ pool, client: openaiClient(assistantSettings), config: assistantSettings });
 const server = createServer((request, response) => route(request, response).catch((error) => { console.error(error); fail(response, 500, 'Erro interno.'); }));
 
 /*

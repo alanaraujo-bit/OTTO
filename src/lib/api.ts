@@ -51,8 +51,9 @@ export async function api<T>(path: string, init: RequestInit = {}, authenticated
     response = await fetch(target, {
       ...init,
       // Bounded rather than open-ended, and abortable, so a stalled request ends as a decision
-      // instead of as a hang.
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      // instead of as a hang. A caller that knows its request is slow by nature — the assistant
+      // waits on a model — passes its own, longer bound.
+      signal: init.signal ?? AbortSignal.timeout(TIMEOUT_MS),
       headers: {
         accept: 'application/json',
         ...(init.body ? { 'content-type': 'application/json' } : {}),

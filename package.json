@@ -9,6 +9,8 @@
     "android": "expo run:android",
     "lint": "tsc --noEmit",
     "ledger": "node --import ./tools/register-ts.mjs tools/ledger-check.mjs",
+    "assistant": "node --import ./tools/register-ts.mjs tools/assistant-check.mjs",
+    "lock": "node --import ./tools/register-ts.mjs tools/lock-check.mjs",
     "ios": "expo run:ios"
   },
   "dependencies": {
