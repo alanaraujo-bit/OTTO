@@ -1409,14 +1409,46 @@ curl -sI https://otto-financas.vercel.app/OTTO.apk | grep -i content-length
 
 ---
 
+## Fase 10 — o Otto, uma auditoria inteira, e o APK 0.3.0
+
+Quatro frentes, um commit cada no branch `otto-0.3`:
+
+- **Os números batem em toda tela.** "Saídas / entradas" somavam o líquido do dia; atrasados tinham
+  uma regra na Home e outra no razão (R$ 999,53 de diferença no mesmo dia); "Dívidas" somava o que se
+  deve com o que se recebe; o calendário contava pendente. Uma dívida criada depois do vencimento
+  começava na parcela 2. E a fatura do cartão passou a entrar na previsão: cada cartão projeta o ciclo
+  no vencimento, quitável como qualquer previsto, e o pagamento não conta como gasto.
+- **Nada destrutivo com um toque.** Trinco em toda rota (link e notificação contornavam a
+  biometria), sair da conta / excluir no razão / remover teto em dois toques, botão desabilitado que
+  finalmente parece desabilitado, "Esqueci a senha" honesto (a API não tem reset).
+- **Otto.** Chat com IA (`app/otto.tsx`) que lê e age no razão. O servidor é um relay fino para a
+  OpenAI (`POST /v1/assistant`, `gpt-6.1-sol`); as ferramentas rodam no celular sobre `src/domain`,
+  então o Otto não tem como discordar da Home. Toda escrita passa por um cartão Confirmar / Cancelar.
+  Limite por usuário e global por dia na tabela `assistant_usage`. A API foi publicada no Railway com
+  `OPENAI_API_KEY` e `OPENAI_MODEL` lá.
+- **Barra de vidro e polimento.** A barra virou uma cápsula de vidro flutuante, montada uma vez no
+  `_layout` para a lente andar no toque. O resto segue uma auditoria de 122 achados em todas as telas.
+
+O emulador voltou a funcionar nesta fase (AVD `OTTO`, porta 5558, SDK em
+`D:\PROJETOS\Phoenix-Recovery\tools\android-sdk` via `ANDROID_HOME`). O app de desenvolvimento roda
+contra a API de produção — não existe ambiente de teste, então tudo que se confirma nele grava nos
+dados reais.
+
+APK: `expo prebuild` + `gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a`,
+como no 0.2.0. Verificado: `versionCode 3`, `versionName 0.3.0`, só ARM, 60,6 MB, certificado
+`fac61745dc09…` — o mesmo, então instala por cima e a sessão sobrevive.
+
+**Fica aberto:** confirmar uma escrita pelo chat de verdade; título que some no swipe do razão;
+ícones novos de categoria exigem mudar a lista de 16 nomes da API junto; lançamentos antigos de
+"Fatura do cartão" sem vínculo continuam contando como gasto; fatura vencida não aparece como
+atrasada; um APK anterior ao 0.3.0 mostra a âncora da fatura como "Fatura X R$ 0" nas recorrências.
+
+---
+
 ## Próximo passo
-**Instalar o APK 0.2.0 e usar de novo com dados reais.** Mesma assinatura dos anteriores, então o
-Android trata como atualização — o que já foi lançado no aparelho continua lá, e agora as
-configurações do Android sabem dizer qual versão está instalada. O que falta verificar no aparelho é
-o que a Fase 9.2 abriu: tocar um total do fluxo cai no razão com a aba certa acesa, no mês do
-stepper e cortado pela direção; e tocar uma linha dos próximos dias abre a regra, quando é previsão,
-ou o próprio lançamento, quando já foi registrado. Depois disso, resta só o resto da Fase 9: escala
-de fonte 1.3, estados vazios e de erro, orçamento de start frio.
+**Instalar o APK 0.3.0 e usar com dados reais.** Mesma assinatura, então é atualização. A verificar
+no aparelho: a barra de vidro e a lente, o Otto respondendo e — com um lançamento pequeno — um
+Confirmar gravando de verdade; a fatura Nubank de novembro na Home; o trinco ao abrir por link.
 
 ## Comandos
 ```bash
@@ -1427,7 +1459,9 @@ node tools/states.mjs       # captura dos estados interativos
 node tools/measure.mjs      # ritmo vertical em dp
 node tools/contrast.mjs     # WCAG da paleta
 node tools/native-check.mjs # compatibilidade de módulos nativos com o Expo Go
-npm run ledger              # 109 checagens: projeção, fita, comparação, fatura, compromissos, gasto e avisos
+npm run ledger              # 129 checagens + 12 dos formulários: projeção, fita, fatura, gasto, avisos
+npm run assistant           # ferramentas do Otto, validação e o laço com o servidor
+npm run lock                # o trinco em cada rota
 npx tsc --noEmit            # typecheck
 ```
 
