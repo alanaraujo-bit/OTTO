@@ -1,4 +1,4 @@
-import { parseISO, startOfMonth } from 'date-fns';
+import { addMonths, format, getDaysInMonth, parseISO, startOfMonth } from 'date-fns';
 import type { Entry, Occurrence, Series } from './model';
 import type { Cents } from './money';
 
@@ -27,17 +27,45 @@ export const occurrenceKey = (seriesId: string, scheduled: string) => `${seriesI
 export const keyOf = (o: Occurrence) => occurrenceKey(o.seriesId, o.date);
 
 /**
+ * The series a card's statements are settled against — one per card, its id derived from the card's.
+ *
+ * A statement is not a rule: its amount is whatever was charged on the card in the cycle, and its
+ * occurrences are produced from the card's own closing and due days (`statementForecast` in
+ * `card.ts`), never from this row. The row exists for one reason. A payment has to say *which*
+ * statement it paid, and the only field an entry has for "this settles that" is `seriesId` — which
+ * the server checks against the ledger's series and the database holds to a foreign key. So the
+ * statement is given a series to be addressed by, and the payment carries the familiar pair: this
+ * id, and the statement's due date in `settlesDate`.
+ *
+ * Derived rather than random so that the forecast, which runs before any such row exists, already
+ * names the id the payment will carry, and so that creating the row is idempotent — the first
+ * payment of a card writes it, every later one finds it there. See `settleOccurrence` in `repo.ts`.
+ *
+ * The prefix is a fact this code writes, not a name the owner typed — which is the line `spend.ts`
+ * draws. Nothing else in the app creates an id of this shape (rows get UUIDs).
+ */
+const STATEMENT = 'fatura-';
+export const statementSeriesId = (cardId: string) => `${STATEMENT}${cardId}`;
+export const isStatementSeries = (seriesId: string | null): boolean =>
+  seriesId !== null && seriesId.startsWith(STATEMENT);
+
+/**
  * Every occurrence the entries account for.
  *
  * `settlesDate ?? date` is the compatibility rule, and it is a widening rather than a guess: an
  * entry written before the field existed could only have been recorded on the day it was due, which
  * is precisely what the old date-equality check in the calendar assumed. Reading it that way keeps
  * those rows suppressing what they always suppressed.
+ *
+ * Statement payments are left out. A statement is settled by amount, not by identity: a partial
+ * payment leaves the rest of it owed, and a key in this set would retire the whole statement on the
+ * first real of it. `statementForecast` nets the payments out of the statement instead, so a fully
+ * paid one simply has nothing left to project.
  */
 export function settled(entries: Entry[]): Set<string> {
   const out = new Set<string>();
   for (const e of entries) {
-    if (e.seriesId === null) continue;
+    if (e.seriesId === null || isStatementSeries(e.seriesId)) continue;
     out.add(occurrenceKey(e.seriesId, e.settlesDate ?? e.date));
   }
   return out;
@@ -119,11 +147,12 @@ export function numbered(
   paidCount: number,
   totalCount: number,
   /**
-   * The debt's first installment month. Required rather than optional: a default would silently
-   * restore ordinal numbering for whichever caller forgot it, and the whole guarantee here is that
-   * the app and the shared link number one payment identically.
+   * The debt's first installment month — `firstInstallment(series)`, not the raw `startDate`, which
+   * is a month late for a debt created after its due day. Required rather than optional: a default
+   * would silently restore ordinal numbering for whichever caller forgot it, and the whole guarantee
+   * here is that the app and the shared link number one payment identically.
    */
-  startDate: string,
+  firstMonth: string,
 ): DebtHistory {
   const untracked = Math.max(0, paidCount - known.length);
 
@@ -136,13 +165,40 @@ export function numbered(
   let previous = untracked;
   const payments = ordered
     .map((p) => {
-      const n = Math.max(installmentOf(p.scheduled, startDate), previous + 1);
+      const n = Math.max(installmentOf(p.scheduled, firstMonth), previous + 1);
       previous = n;
       return { ...p, n: Math.min(n, totalCount) };
     })
     .reverse();
 
   return { payments, untracked };
+}
+
+/**
+ * The month a debt's installment 1 falls in, as `yyyy-MM-01`.
+ *
+ * Not simply the month of `startDate`, and the difference is a debt created after its own due day.
+ * The recurrence form writes `startDate = today` for a debt with nothing paid yet; created on the
+ * 18th with a due day of 10, the occurrence of that month is *before* the debt started, so
+ * `occurrences` never emits it — the first installment the owner will ever pay is next month's.
+ * Numbering from the start's own month anyway made that first payment "parcela 2" and, because the
+ * count bounds the calendar, silently dropped the last installment: a 17-installment debt projected
+ * 16.
+ *
+ * So installment 1 is the first month whose due day is on or after `startDate`, which is exactly the
+ * `started` test `occurrences` applies — the numbering and the emission now ask the same question.
+ * A debt created with installments already paid starts on the 1st of a month (`startDateFor`), so
+ * for every such debt, and for every debt created on or before its due day, this is the start's own
+ * month and nothing changes.
+ *
+ * Takes only the two fields it reads so the shared link, whose payload carries both, numbers with it
+ * too.
+ */
+export function firstInstallment(series: Pick<Series, 'startDate' | 'dayOfMonth'>): string {
+  const start = parseISO(series.startDate);
+  const month = startOfMonth(start);
+  const due = Math.min(series.dayOfMonth, getDaysInMonth(month));
+  return format(due < start.getDate() ? addMonths(month, 1) : month, 'yyyy-MM-dd');
 }
 
 /**
@@ -153,8 +209,8 @@ export function numbered(
  * the shared link and the projection all read it — and the only way to guarantee that is for the
  * number to be a function of the month and nothing else.
  */
-function installmentOf(scheduled: string, startDate: string): number {
-  const start = startOfMonth(parseISO(startDate));
+function installmentOf(scheduled: string, firstMonth: string): number {
+  const start = startOfMonth(parseISO(firstMonth));
   const at = startOfMonth(parseISO(scheduled));
   return (at.getFullYear() - start.getFullYear()) * 12 + (at.getMonth() - start.getMonth()) + 1;
 }
@@ -169,5 +225,5 @@ export function debtHistory(series: Series, entries: Entry[]): DebtHistory {
       amountCents: e.amountCents,
     }));
 
-  return numbered(known, series.paidCount, series.totalCount ?? known.length, series.startDate);
+  return numbered(known, series.paidCount, series.totalCount ?? known.length, firstInstallment(series));
 }

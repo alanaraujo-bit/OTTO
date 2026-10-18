@@ -22,7 +22,10 @@ import {
   nextOpen as nextOpenWith,
   overdue,
 } from '../src/domain/projection.ts';
-import { settled, occurrenceKey, numbered, debtHistory } from '../src/domain/settlement.ts';
+import { settled, occurrenceKey, numbered, debtHistory, firstInstallment, statementSeriesId, isStatementSeries } from '../src/domain/settlement.ts';
+import { readFileSync } from 'node:fs';
+import { calendarDays } from '../src/domain/calendar.ts';
+import { ringCut } from '../src/domain/category.ts';
 import { NO_DEFERRALS, deferralMap } from '../src/domain/deferral.ts';
 
 /*
@@ -55,7 +58,7 @@ import {
   spendPace,
   categoryPace,
 } from '../src/domain/analysis.ts';
-import { statementCycle, statementTotal, limitUse } from '../src/domain/card.ts';
+import { statementCycle, statementTotal, limitUse, statementForecast, withStatements, payStatement } from '../src/domain/card.ts';
 import { commitments, commitmentFor } from '../src/domain/commitments.ts';
 import { paymentSeries, isSpend } from '../src/domain/spend.ts';
 import { alertsFor as alertsForWith, monthClose as monthCloseWith } from '../src/domain/alerts.ts';
@@ -70,6 +73,7 @@ import {
   draftCents,
   formatMoneyDraft,
   draftFromCents,
+  roundToReal,
 } from '../src/domain/money.ts';
 import { sampleMonth } from '../src/domain/sampleMonth.ts';
 
@@ -1661,6 +1665,365 @@ check('uma parcela adiada para o mes que vem nao esta vencida hoje', () => {
 });
 
 
+
+/*
+ * Auditoria de 18/10/2026: numeros que nao batiam entre telas. Um check por achado.
+ */
+
+check('HOME-01: a pagar e a receber somam movimentos brutos, nao o saldo de cada dia', () => {
+  // Payday that also pays bills: R$ 1.200 in and R$ 430 out on the 5th. Netting the day turned it
+  // into "entrada 770, saida 0" — the bills vanished from a pagar.
+  const today = '2026-10-18';
+  const list = [
+    entry({ id: 'sal', date: '2026-10-05', amountCents: 120000, direction: 'in', category: 'Renda' }),
+    entry({ id: 'luz', date: '2026-10-05', amountCents: 30000, direction: 'out' }),
+    entry({ id: 'net', date: '2026-10-05', amountCents: 13000, direction: 'out' }),
+  ];
+  // And a projected day ahead that is mixed too: a R$ 500 receivable and R$ 800 of rent on the 25th.
+  const rules = [
+    monthly({ id: 'rent', amountCents: 80000, dayOfMonth: 25 }),
+    monthly({ id: 'sale', kind: 'inflow', direction: 'in', amountCents: 50000, dayOfMonth: 25, category: 'Venda' }),
+  ];
+  const c = monthCurve(acc, list, rules, today);
+  assert.equal(c.inflowDone, 120000, 'o salario inteiro entrou');
+  assert.equal(c.outflowDone, 43000, 'as duas contas sairam');
+  assert.equal(c.inflow, 170000, 'salario + venda prevista');
+  assert.equal(c.outflow, 123000, 'contas pagas + aluguel previsto');
+  // The curve itself is still the net walk.
+  assert.equal(c.balanceEnd - c.balanceStart, c.inflow - c.outflow);
+});
+
+check('RECON-01: Home e razao concordam em todo dia depois de hoje, com atrasados', () => {
+  // A receivable not received (R$ 500, day 7) and a rent not paid (R$ 1.800, day 8), both before
+  // today. Home carried them to tomorrow; the razao never counted them, so the two screens
+  // disagreed by the overdue total on every later day, and into the next months.
+  const today = '2026-10-18';
+  const open = [entry({ id: 'saldo', date: '2026-10-01', amountCents: 300000, direction: 'in' })];
+  const rules = [
+    monthly({ id: 'rent', amountCents: 180000, dayOfMonth: 8 }),
+    monthly({ id: 'sale', kind: 'inflow', direction: 'in', amountCents: 50000, dayOfMonth: 7, category: 'Venda' }),
+    monthly({ id: 'net', amountCents: 5000, dayOfMonth: 20, title: 'Internet' }),
+  ];
+  const curve = monthCurve(acc, open, rules, today);
+  const tape = ledgerTape(acc, open, rules, today, '2026-09-01', '2026-12-31');
+  for (const day of tape.filter((d) => d.date > today && d.date <= curve.to)) {
+    const point = curve.points.find((p) => p.date === day.date);
+    assert.equal(day.balance, point.balance, 'razao e Home divergem em ' + day.date);
+  }
+  const tomorrow = tape.find((d) => d.date === '2026-10-19');
+  assert.ok(tomorrow, 'amanha entra na fita para carregar os atrasados');
+  assert.equal(tomorrow.carried, 50000 - 180000, 'carrega o liquido dos atrasados');
+  // The overdue rows still draw on their own days and move nothing there.
+  assert.equal(tape.find((d) => d.date === '2026-10-08').moved, 0);
+  assert.equal(tape.find((d) => d.date === '2026-10-07').moved, 0);
+  // Next month opens on the same figure from both routes.
+  const nov = monthCurve(acc, open, rules, today, '2026-11-15');
+  const lastOct = tape.filter((d) => d.date <= '2026-10-31').pop();
+  assert.equal(nov.balanceStart, lastOct.balance, 'novembro abre igual nas duas telas');
+  // The walk invariant survives the carry.
+  for (let i = 1; i < tape.length; i++) assert.equal(tape[i].balance, tape[i - 1].balance + tape[i].moved);
+});
+
+check('RECON-01: a janela que abre depois de amanha nao cobra o atrasado duas vezes', () => {
+  const today = '2026-10-18';
+  const open = [entry({ id: 'saldo', date: '2026-10-01', amountCents: 300000, direction: 'in' })];
+  const rules = [monthly({ id: 'rent', amountCents: 180000, dayOfMonth: 8 })];
+  const whole = ledgerTape(acc, open, rules, today, '2026-10-01', '2026-11-30');
+  const later = ledgerTape(acc, open, rules, today, '2026-11-01', '2026-11-30');
+  assert.equal(later[later.length - 1].balance, whole[whole.length - 1].balance);
+  assert.ok(later.every((d) => d.carried === 0));
+});
+
+check('RECON-01: regra lancada no cartao nao mexe na curva da Home, como nao mexe na fita', () => {
+  const today = '2026-10-18';
+  const open = [entry({ id: 'saldo', date: '2026-10-01', amountCents: 300000, direction: 'in' })];
+  const onCard = monthly({ id: 'stream', accountId: 'c', amountCents: 4000, dayOfMonth: 25, title: 'Streaming' });
+  const without = monthCurve(acc, open, [], today);
+  const withCard = monthCurve(acc, open, [onCard], today);
+  assert.equal(withCard.balanceEnd, without.balanceEnd, 'a assinatura no cartao sai pela fatura, nao do saldo');
+  const tape = ledgerTape(acc, open, [onCard], today, '2026-10-01', '2026-10-31');
+  assert.equal(tape[tape.length - 1].balance, withCard.balanceEnd);
+});
+
+check('HOME-02: o que voce deve e o que te devem nao somam num total so', () => {
+  const owe = monthly({ id: 'moto', kind: 'debt', totalCount: 17, paidCount: 0, amountCents: 273000, startDate: '2026-10-01' });
+  const owed = monthly({ id: 'pc', kind: 'debt', direction: 'in', totalCount: 4, paidCount: 1, amountCents: 50000, startDate: '2026-09-01' });
+  const all = debtStatus([owe, owed]);
+  const sum = (dir) => all.filter((d) => d.series.direction === dir).reduce((n, d) => n + d.remainingCents, 0);
+  // The split the Home now draws, under "voce deve" and "voce recebe".
+  assert.equal(sum('out'), 17 * 273000);
+  assert.equal(sum('in'), 3 * 50000);
+});
+
+check('CAL-01: o total do dia no calendario nao soma o que ficou pendente', () => {
+  // 5 de outubro: salario recebido (1.200), uma conta paga (429,68) e uma parcela a receber de
+  // R$ 500 que nao chegou. O dia mostrava +1.270,32 em verde, R$ 500 dele inexistentes.
+  const today = '2026-10-18';
+  const list = [
+    entry({ id: 'sal', date: '2026-10-05', amountCents: 120000, direction: 'in' }),
+    entry({ id: 'conta', date: '2026-10-05', amountCents: 42968, direction: 'out' }),
+  ];
+  const sale = monthly({ id: 'pc', kind: 'debt', direction: 'in', totalCount: 4, paidCount: 0, amountCents: 50000, dayOfMonth: 5, startDate: '2026-10-01' });
+  const days = calendarDays(list, [sale], '2026-10-01', '2026-10-31', today, NO_DEFERRALS);
+  const d5 = days.get('2026-10-05');
+  assert.equal(d5.items.length, 3, 'o pendente continua listado');
+  assert.equal(d5.pending, true);
+  assert.equal(d5.moved, 120000 - 42968, 'so o que se moveu');
+  // A forecast day ahead still totals its forecast.
+  const nov = calendarDays(list, [sale], '2026-11-01', '2026-11-30', today, NO_DEFERRALS);
+  assert.equal(nov.get('2026-11-05').moved, 50000);
+});
+
+check('HOME-08: sem centavos e sempre arredondado, nunca truncado', () => {
+  assert.equal(roundToReal(134350), 134400);
+  assert.equal(roundToReal(134349), 134300);
+  assert.equal(roundToReal(-134350), -134400, 'o negativo arredonda como o positivo');
+  assert.equal(roundToReal(-40), 0);
+  // What `Amount showCents={false}` prints is now what `brlShort` prints.
+  for (const v of [134350, 430750, 99, 50, 49, -134350, 0]) {
+    const p = parts(roundToReal(v));
+    assert.equal(`${p.sign}R$ ${p.whole}`, brlShort(v), 'divergem em ' + v);
+  }
+  assert.equal(brlShort(-40), 'R$ 0', 'nada de "-R$ 0"');
+});
+
+check('CATG-01: Categorias le o mes ate hoje, a mesma janela do teto', () => {
+  const today = '2026-10-18';
+  const list = [
+    entry({ id: 'old', date: '2026-08-10', amountCents: 80500, category: 'Transporte' }),
+    entry({ id: 'set', date: '2026-09-30', amountCents: 20000, category: 'Transporte' }),
+    entry({ id: 'out1', date: '2026-10-02', amountCents: 30000, category: 'Transporte' }),
+    entry({ id: 'out2', date: '2026-10-17', amountCents: 9466, category: 'Transporte' }),
+  ];
+  const monthToDate = spendByCategory(list, '2026-10-01', today, new Set()).find((c) => c.category === 'Transporte');
+  assert.equal(monthToDate.cents, 39466, 'so outubro');
+  const r = capReading({ category: 'Transporte', capCents: 100000 }, list, [], today);
+  assert.equal(r.spent, monthToDate.cents, 'o valor da linha e o valor que o teto julga');
+});
+
+check('HOME-04: o resto do donut nunca colide com uma categoria chamada Outros', () => {
+  const spend = [
+    { category: 'Outros', cents: 116000 },
+    { category: 'Transporte', cents: 80500 },
+    { category: 'Ajuste', cents: 64900 },
+    { category: 'Cartão de Crédito', cents: 30827 },
+    { category: 'Mercado', cents: 15000 },
+    { category: 'Saúde', cents: 6617 },
+  ];
+  const cut = ringCut(spend, 4);
+  assert.equal(cut.length, 5);
+  assert.equal(new Set(cut.map((c) => c.key)).size, cut.length, 'chaves unicas');
+  assert.equal(new Set(cut.map((c) => c.category)).size, cut.length, 'rotulos unicos');
+  const rest = cut[cut.length - 1];
+  assert.equal(rest.isRest, true);
+  assert.equal(rest.category, 'Demais');
+  assert.equal(rest.cents, 21617);
+  // Even a category literally called "Demais" keeps its own key.
+  const odd = ringCut([...spend.slice(0, 3), { category: 'Demais', cents: 30000 }, ...spend.slice(4)], 4);
+  assert.equal(new Set(odd.map((c) => c.key)).size, odd.length);
+  // Nothing left over, no remainder slice.
+  assert.equal(ringCut(spend.slice(0, 4), 4).some((c) => c.isRest), false);
+});
+
+check('DEBT-START: divida criada depois do dia de vencimento comeca na parcela 1 e nao perde a ultima', () => {
+  // Created on 18/out with nothing paid; due on the 10th. October's installment is before the debt
+  // began, so November is parcela 1 — it used to be parcela 2, and the 17th was dropped.
+  const debt = monthly({ id: 'moto', kind: 'debt', totalCount: 17, paidCount: 0, dayOfMonth: 10, startDate: '2026-10-18' });
+  assert.equal(firstInstallment(debt), '2026-11-01');
+  const all = occurrences(debt, '2026-01-01', '2029-12-31');
+  assert.equal(all.length, 17, 'todas as dezessete parcelas existem');
+  assert.equal(all[0].date, '2026-11-10');
+  assert.deepEqual(all[0].installment, { n: 1, of: 17 });
+  assert.equal(all[16].date, '2028-03-10');
+  assert.deepEqual(all[16].installment, { n: 17, of: 17 });
+  assert.equal(debtStatus([debt])[0].finishes, '2028-03-01', 'termina na 17a, nao um mes antes');
+  assert.equal(commitmentFor(debt, '2026-10-18').remaining.finishes, '2028-03-01');
+  // A recorded payment of November's installment is numbered 1 by the history too.
+  const h = debtHistory({ ...debt, paidCount: 1 }, [
+    entry({ id: 'p1', seriesId: 'moto', settlesDate: '2026-11-10', date: '2026-11-10', amountCents: 100000 }),
+  ]);
+  assert.equal(h.payments[0].n, 1, 'historico e projecao concordam');
+
+  // Unchanged where it was already right: created on or before the due day, or with installments
+  // already paid (`startDateFor` puts those on the 1st).
+  assert.equal(firstInstallment({ ...debt, startDate: '2026-10-10' }), '2026-10-01');
+  assert.equal(firstInstallment({ ...debt, startDate: '2026-10-05' }), '2026-10-01');
+  assert.equal(firstInstallment({ ...debt, startDate: '2026-04-01', paidCount: 6 }), '2026-04-01');
+  // Day 31 clamps the way occurrences clamps: created on 30/nov with due day 31, November's is the 30th.
+  assert.equal(firstInstallment({ ...debt, dayOfMonth: 31, startDate: '2026-11-30' }), '2026-11-01');
+});
+
+/*
+ * Faturas: a card's statement is projected as a bill on its due date, paid from a conta through the
+ * same settlement as any forecast, and its payment is never spend.
+ *
+ * The card closes on the 4th and falls due on the 11th — the owner's Nubank. Today is 18/out, so the
+ * statement still open covers 05/out..04/nov and falls due 11/nov.
+ */
+{
+  const FT = '2026-10-18';
+  const facc = [
+    { id: 'a', name: 'CC', kind: 'checking', openingCents: 100000, closingDay: null, dueDay: null, limitCents: null },
+    { id: 'nu', name: 'Nubank', kind: 'card', openingCents: 0, closingDay: 4, dueDay: 11, limitCents: 500000 },
+  ];
+  const FID = statementSeriesId('nu');
+  const buy = (id, date, amountCents, over = {}) =>
+    entry({ id, date, amountCents, accountId: 'nu', category: 'Mercado', title: 'compra', ...over });
+  const pay = (id, amountCents, settlesDate = '2026-11-11', over = {}) => entry({
+    id, date: FT, amountCents, accountId: 'a', seriesId: FID, settlesDate, category: 'Cartão', title: 'Fatura Nubank', ...over,
+  });
+  const buys = [buy('b1', '2026-10-06', 12000), buy('b2', '2026-10-15', 11435)];
+  const novItems = (entries, series = []) =>
+    projectWith(withStatements(facc, entries, series, FT), '2026-11-01', '2026-11-30', settled(entries), NO_DEFERRALS);
+  // The server's own validator, lifted out of api/src/server.js, which cannot be imported without a
+  // database. If the server would refuse the document, the payment could never be saved.
+  const serverSource = readFileSync(new URL('../api/src/server.js', import.meta.url), 'utf8');
+  const serverLedger = new Function(
+    serverSource.slice(serverSource.indexOf('const CATEGORY_ICONS'), serverSource.indexOf('async function migrate()')) +
+      '\nreturn ledger;',
+  )();
+
+  check('fatura: projetada no vencimento, pelo total do ciclo', () => {
+    const [f, ...rest] = statementForecast(facc, buys, FT);
+    assert.equal(rest.length, 0, 'only the open cycle has purchases');
+    assert.equal(f.id, FID);
+    assert.equal(f.startDate, '2026-11-11', 'on the due date');
+    assert.equal(f.amountCents, 23435, 'R$ 234,35 — what was charged in 05/out..04/nov');
+    assert.equal(f.accountId, 'a', 'booked on the conta that pays it, never the card');
+    assert.equal(f.title, 'Fatura Nubank');
+    const nov = novItems(buys);
+    assert.equal(nov.length, 1);
+    assert.equal(nov[0].on, '2026-11-11');
+    assert.equal(nov[0].kind, 'card');
+  });
+
+  check('fatura: o ciclo aberto cresce com cada compra; fora do ciclo nao entra', () => {
+    const more = [...buys, buy('b3', '2026-11-04', 1000), buy('b4', '2026-11-05', 7000), buy('b5', '2026-10-04', 9900)];
+    const [f, next] = statementForecast(facc, more, FT);
+    assert.equal(f.amountCents, 23435 + 1000, 'the closing day itself is in; the day after and the day before the cycle are not');
+    assert.equal(next.startDate, '2026-12-11', 'a purchase after the close lands on the next statement');
+    assert.equal(next.amountCents, 7000);
+  });
+
+  check('fatura: ciclo zerado nao projeta nada; estorno abate', () => {
+    assert.equal(statementForecast(facc, [], FT).length, 0, 'no purchases, no statement');
+    const refund = buy('r', '2026-10-20', 23435, { direction: 'in' });
+    assert.equal(statementForecast(facc, [...buys, refund], FT).length, 0, 'a refund that cancels it leaves nothing');
+    const noCycle = [facc[0], { ...facc[1], closingDay: null }];
+    assert.equal(statementForecast(noCycle, buys, FT).length, 0, 'a card with no cycle is never guessed');
+    assert.equal(statementForecast([facc[1]], buys, FT).length, 0, 'nowhere to pay it from, nothing projected');
+  });
+
+  check('fatura: vencida antes de hoje nao volta como atrasada', () => {
+    // 05/set..04/out, due 11/out — paid (or not) by an unlinked lançamento nobody can tell apart.
+    const old = [buy('o1', '2026-09-20', 24511)];
+    assert.equal(statementForecast(facc, old, FT).length, 0);
+    assert.equal(overdue(withStatements(facc, old, [], FT), old, FT, NO_DEFERRALS).length, 0);
+  });
+
+  check('fatura: a curva da conta cai no vencimento, nao na compra', () => {
+    const before = monthCurve(facc, [], [], FT, '2026-11-01');
+    const after = monthCurve(facc, buys, [], FT, '2026-11-01');
+    assert.equal(balanceToday(facc, buys, FT), 100000, 'a purchase on the card moves no balance today');
+    assert.equal(after.outflow - before.outflow, 23435, 'SAÍDAS of November carry the statement');
+    assert.equal(after.balanceEnd, before.balanceEnd - 23435, 'fim do mês drops by it');
+    assert.equal(after.points[9].balance, 100000, 'still untouched on 10/nov');
+    assert.equal(after.points[10].balance, 100000 - 23435, 'and down on 11/nov');
+    // The tape and the calendar read the same set.
+    const tape = ledgerTape(facc, buys, [], FT, '2026-11-01', '2026-11-30');
+    const day = tape.find((d) => d.date === '2026-11-11');
+    assert.equal(day.items[0].occurrence.seriesId, FID, 'the razão has the row, settle-able by its occurrence');
+    assert.equal(tape[tape.length - 1].balance, after.balanceEnd, 'tape ends where the curve ends');
+    const cal = calendarDays(buys, withStatements(facc, buys, [], FT), '2026-11-01', '2026-11-30', FT, NO_DEFERRALS);
+    assert.equal(cal.get('2026-11-11').moved, -23435);
+    assert.equal(cal.get('2026-11-11').items[0].scheduled, '2026-11-11', 'the calendar row names the statement to settle');
+    // Idempotent: a caller that already added the statements does not count them twice.
+    const twice = monthCurve(facc, buys, withStatements(facc, buys, [], FT), FT, '2026-11-01');
+    assert.equal(twice.outflow, after.outflow);
+  });
+
+  check('fatura: entra no alerta de saldo negativo', () => {
+    const poor = [{ ...facc[0], openingCents: 10000 }, facc[1]];
+    const alerts = alertsForWith(poor, buys, [], '2026-11-01', NO_DEFERRALS, []);
+    const trough = alerts.find((a) => a.kind === 'trough');
+    assert.ok(trough, 'the statement is what sinks the month');
+    assert.match(trough.body, /Fatura Nubank/);
+  });
+
+  check('fatura: paga, sai da previsao e nao conta como gasto', () => {
+    const paid = [...buys, pay('p', 23435)];
+    assert.equal(statementForecast(facc, paid, FT).length, 0, 'paid in full, nothing left to project');
+    assert.equal(novItems(paid).length, 0);
+    const noPay = monthCurve(facc, buys, [], FT, '2026-11-01');
+    const withPay = monthCurve(facc, paid, [], FT, '2026-11-01');
+    assert.equal(withPay.balanceStart, noPay.balanceStart - 23435, 'paid early, the money left today');
+    assert.equal(withPay.balanceEnd, noPay.balanceEnd, 'and November ends exactly where it would have');
+    assert.equal(withPay.outflow, noPay.outflow - 23435, 'November no longer carries it');
+    // Spend: the purchases were spend the day they were made; the payment is a transfer — even with
+    // the anchor row hidden from the list the caller holds, as the store hides it.
+    const spend = spendByCategory(paid, '2026-10-01', '2026-10-31', paymentSeries([]));
+    assert.deepEqual(spend, [{ category: 'Mercado', cents: 23435 }], 'R$ 234,35 of Mercado, never a second R$ 234,35 of Cartão');
+    assert.equal(isSpend(paid[2], new Set()), false);
+    assert.equal(settled(paid).has(occurrenceKey(FID, '2026-11-11')), false, 'a statement is settled by amount, not by key');
+  });
+
+  check('fatura: pagamento parcial deixa o resto previsto no mesmo dia', () => {
+    const part = [...buys, pay('p1', 10000)];
+    const [f] = statementForecast(facc, part, FT);
+    assert.equal(f.amountCents, 13435, 'R$ 134,35 still owed');
+    assert.equal(f.startDate, '2026-11-11');
+    const both = [...part, pay('p2', 13435)];
+    assert.equal(statementForecast(facc, both, FT).length, 0, 'the rest paid, nothing left');
+    // Matched by the due month: the owner moving the due day keeps a paid statement paid.
+    const moved = [facc[0], { ...facc[1], dueDay: 12 }];
+    assert.equal(statementForecast(moved, both, FT).length, 0);
+    // A payment of a different statement does not touch this one.
+    const other = [...buys, pay('p3', 23435, '2026-12-11')];
+    assert.equal(statementForecast(facc, other, FT)[0].amountCents, 23435);
+  });
+
+  check('fatura: o documento do razao volta do servidor com a identidade intacta', () => {
+    const doc = { accounts: facc, series: [], entries: buys, caps: [], categories: [], deferrals: [] };
+    const p = { ...entry({ id: 'p', date: FT, amountCents: 10000, accountId: 'a', category: 'Cartão', title: 'Fatura Nubank' }), recordedAt: '2026-10-18T12:00:00.000Z' };
+    const once = payStatement(doc, FID, '2026-11-11', p);
+    assert.equal(once.series.length, 1, 'the first payment writes the anchor row');
+    assert.equal(once.series[0].accountId, 'nu', 'booked on the card, so it moves no balance');
+    assert.equal(once.series[0].amountCents, 0);
+    assert.equal(payStatement(once, FID, '2026-11-11', p), once, 'a retry of the same entry is a no-op');
+    const twice = payStatement(once, FID, '2026-11-11', { ...p, id: 'p2', amountCents: 13435 });
+    assert.equal(twice.series.length, 1, 'the second payment finds the anchor');
+    assert.equal(twice.entries.length, buys.length + 2, 'and is recorded — it is the rest of a partial one');
+    assert.throws(() => payStatement(doc, FID, '2026-11-11', { ...p, accountId: 'nu' }), /conta/, 'never paid from a card');
+    assert.throws(() => payStatement(doc, statementSeriesId('ghost'), '2026-11-11', p), /cartão/);
+
+    const wire = JSON.parse(JSON.stringify(twice));
+    assert.ok(serverLedger(wire), 'the server accepts the document with the anchor and the linked payments');
+    assert.equal(serverLedger({ ...wire, series: [] }), null, 'and would refuse the payment without its anchor — which is why it is written');
+    // What the store hands the screens: the anchor hidden, the forecast reading the payments.
+    const store = { ...wire, series: wire.series.filter((s) => !isStatementSeries(s.id)) };
+    assert.equal(store.series.length, 0);
+    assert.equal(statementForecast(store.accounts, store.entries, FT).length, 0, 'paid in full after the round trip');
+    assert.equal(novItems(store.entries, wire.series).length, 0, 'the stored anchor projects nothing of its own');
+    assert.equal(commitments(store.series, FT).monthlyOut, 0, 'and is no commitment');
+  });
+
+  check('fatura: apagar o cartao solta os pagamentos e o servidor aceita', () => {
+    const p = { ...entry({ id: 'p', date: FT, amountCents: 23435, accountId: 'a', category: 'Cartão', title: 'Fatura Nubank' }), recordedAt: null };
+    const doc = payStatement({ accounts: facc, series: [], entries: buys, caps: [], categories: [], deferrals: [] }, FID, '2026-11-11', p);
+    // `deleteAccount`'s rule, restated: rows on the card go, entries elsewhere let go of its rules.
+    const gone = new Set(doc.series.filter((s) => s.accountId === 'nu').map((s) => s.id));
+    const after = {
+      ...doc,
+      accounts: doc.accounts.filter((a) => a.id !== 'nu'),
+      series: doc.series.filter((s) => s.accountId !== 'nu'),
+      entries: doc.entries
+        .filter((e) => e.accountId !== 'nu')
+        .map((e) => (gone.has(e.seriesId) ? { ...e, seriesId: null, settlesDate: null } : e)),
+    };
+    assert.ok(serverLedger(JSON.parse(JSON.stringify(after))), 'the card can still be deleted');
+  });
+}
+
 console.log(`\n${pass} checagens de aritmetica passaram.`);
 
 /**
@@ -1698,3 +2061,6 @@ console.log(`dividas                ${debts.map((d) => `${d.series.title} ${d.pa
 assert.equal(curve.points[curve.todayIndex].balance, curve.balanceNow, 'curve passes through hero');
 assert.ok(entries.length > 100, 'the sample must be dense enough to look like a real month');
 assert.ok(spend.length >= 4, 'the category chart needs enough rows to be worth drawing');
+
+// The forms' own decisions (category order, typed money, Adiar choices) ride along with the ledger run.
+await import('./forms-check.mjs');

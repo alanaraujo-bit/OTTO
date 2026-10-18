@@ -1,5 +1,7 @@
 import { addDays, format, getDaysInMonth, startOfMonth, subDays, subMonths } from 'date-fns';
 import type { Account, Entry, Series } from './model';
+import { STATEMENT_CATEGORY, statementAnchor, statementCycle, statementTotal } from './card';
+import { statementSeriesId } from './settlement';
 
 /**
  * A plausible ledger, so the screens can be judged with real weight before capture exists.
@@ -46,7 +48,6 @@ interface Recurring {
 const RECURRING: Recurring[] = [
   { title: 'Salário', category: 'Renda', cents: 740_000, on: 5, kind: 'inflow', direction: 'in' },
   { title: 'Aluguel', category: 'Moradia', cents: 185_000, on: 3, kind: 'outflow', direction: 'out' },
-  { title: 'Fatura Nubank', category: 'Cartão', cents: 124_000, on: 10, kind: 'card', direction: 'out' },
   { title: 'Energia', category: 'Casa', cents: 21_460, on: 12, kind: 'outflow', direction: 'out' },
   { title: 'Internet', category: 'Casa', cents: 12_990, on: 9, kind: 'outflow', direction: 'out' },
   { title: 'Academia', category: 'Saúde', cents: 11_900, on: 15, kind: 'outflow', direction: 'out' },
@@ -169,6 +170,34 @@ export function sampleMonth(today: Date = new Date()): SampleLedger {
       });
     }
 
+    /*
+     * The card's statement, paid on the day it falls due, for exactly what was charged in its cycle.
+     *
+     * This used to be a fixed R$ 1.240 rule of `kind: 'card'`. Statements are now projected from the
+     * card itself (`statementForecast`), so keeping that rule would bill the same statement twice —
+     * once at the made-up figure, once at the real one. Each payment here is linked the way `lançar`
+     * links one, which is also what keeps it out of spend.
+     */
+    const cycle = statementCycle(accounts[1] as Account, date);
+    if (cycle && cycle.due === date) {
+      const owed = statementTotal(entries, accounts[1] as Account, cycle);
+      if (owed > 0) {
+        entries.push({
+          id: id('ent'),
+          seriesId: statementSeriesId(CARD),
+          settlesDate: date,
+          recordedAt: null,
+          time: null,
+          date,
+          amountCents: owed,
+          direction: 'out',
+          title: 'Fatura Nubank',
+          category: STATEMENT_CATEGORY,
+          accountId: ACCOUNT,
+        });
+      }
+    }
+
     for (const v of VARIABLE) {
       if (random() > v.odds) continue;
       /*
@@ -196,6 +225,10 @@ export function sampleMonth(today: Date = new Date()): SampleLedger {
       });
     }
   }
+
+  // The row those payments point at — the server holds every `seriesId` to a series in the document.
+  const paid = entries.find((e) => e.seriesId === statementSeriesId(CARD));
+  if (paid) series.push(statementAnchor(accounts[1] as Account, paid.date));
 
   return { accounts, series, entries };
 }

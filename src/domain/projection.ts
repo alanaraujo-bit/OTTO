@@ -20,8 +20,9 @@ import {
 } from './model';
 import type { Cents } from './money';
 import { landsOn, monthOf } from './deferral';
-import { keyOf, settled } from './settlement';
+import { firstInstallment, keyOf, settled } from './settlement';
 import { isSpend } from './spend';
+import { withStatements } from './card';
 
 /** Plain local-time day keys. Everything downstream compares these as strings. */
 export const dayKey = (d: Date) => format(d, 'yyyy-MM-dd');
@@ -111,18 +112,22 @@ export function occurrences(series: Series, from: string, to: string): Occurrenc
 /**
  * How many of a debt's installments fall strictly before `before`.
  *
- * Takes only the three fields it reads, rather than a whole `Series`, so a shared link can number
+ * Counted from `firstInstallment`, not from the month of `startDate`: a debt created after its due
+ * day has no installment in its start month, and counting that empty month made the first payment
+ * "parcela 2" and dropped the last one off the end of the calendar.
+ *
+ * Takes only the four fields it reads, rather than a whole `Series`, so a shared link can number
  * its installments with this same function. The public payload is not a ledger and never will be —
  * it carries a start date and a count and no account — but the numbering a reader sees on the web
  * must be the numbering the owner sees in the app, and the only way to guarantee that is for both
  * to come from here.
  */
 export function elapsedInstallments(
-  series: Pick<Series, 'kind' | 'totalCount' | 'startDate'>,
+  series: Pick<Series, 'kind' | 'totalCount' | 'startDate' | 'dayOfMonth'>,
   before: Date,
 ): number {
   if (series.kind !== 'debt' || series.totalCount == null) return 0;
-  const start = startOfMonth(parseDay(series.startDate));
+  const start = parseDay(firstInstallment(series));
   const months =
     (before.getFullYear() - start.getFullYear()) * 12 + (before.getMonth() - start.getMonth());
   return Math.max(0, Math.min(series.totalCount, months));
@@ -359,22 +364,51 @@ export function monthCurve(
 
   const era: MonthCurve['era'] = to < today ? 'past' : from > today ? 'future' : 'current';
 
+  // The cards' statements join the rules here rather than at every caller, so no screen that draws
+  // this curve can forget the one bill that makes the checking account drop on the due date. See
+  // `withStatements` — idempotent, so a caller that already added them changes nothing.
+  series = withStatements(accounts, entries, series, today);
+
   const holding = new Set(accounts.filter((a) => a.kind !== 'card').map((a) => a.id));
+  /*
+   * Only rules booked against money the owner holds. A subscription charged to a card moves no
+   * balance on its day — the statement that pays for it does — so projecting it here would take it
+   * out of the checking account twice. `ledgerTape` and the overdue feed below already read the
+   * rules this way; the forecast half of this curve was the one place that did not, and two screens
+   * reading one ledger must not differ about which rules move the balance.
+   */
+  const planned = series.filter((s) => holding.has(s.accountId));
+
+  /*
+   * Movement per day, kept as its two gross sides rather than as one net figure.
+   *
+   * The curve only needs the net, but "a pagar" and "a receber" are sums of movements, and a net
+   * cannot be taken apart again: a payday that also paid three bills used to reach those totals as
+   * one smaller inflow and no outflow at all — the bills vanished from "a pagar" and the salary
+   * shrank in "a receber" by exactly the same amount. Keeping both sides per day costs nothing and
+   * makes each total the sum of the movements it names.
+   */
+  type Flow = { in: Cents; out: Cents };
+  const bump = (map: Map<string, Flow>, date: string, cents: Cents, direction: Direction) => {
+    const f = map.get(date) ?? { in: 0, out: 0 };
+    f[direction] += cents;
+    map.set(date, f);
+  };
 
   // Actual movement per day, this month, from entries.
-  const moved = new Map<string, Cents>();
+  const moved = new Map<string, Flow>();
   for (const e of entries) {
     if (!holding.has(e.accountId) || e.date < from || e.date > to) continue;
-    moved.set(e.date, (moved.get(e.date) ?? 0) + signed(e.amountCents, e.direction));
+    bump(moved, e.date, e.amountCents, e.direction);
   }
 
   // Projected movement per day. Only ever consulted for days after today — a projection laid over a
   // day that has already happened would invent a bill the owner either paid or did not.
-  const plan = new Map<string, Cents>();
+  const plan = new Map<string, Flow>();
   if (to > today) {
     const planFrom = from > today ? from : dayKey(addDays(todayD, 1));
-    for (const o of project(series, planFrom, to, settled(entries), deferrals)) {
-      plan.set(o.on, (plan.get(o.on) ?? 0) + signed(o.amountCents, o.direction));
+    for (const o of project(planned, planFrom, to, settled(entries), deferrals)) {
+      bump(plan, o.on, o.amountCents, o.direction);
     }
   }
 
@@ -390,14 +424,17 @@ export function monthCurve(
    * was recorded, and the month stops closing on a figure that quietly forgot the rent. The screens
    * get `overdueCents` to name it separately, because "already late" is not the same news as
    * "coming up".
+   *
+   * This is the one rule for an overdue item, and every screen obeys it: drawn on the day it was
+   * due, moving nothing on that day, counted by the forecast on tomorrow. `ledgerTape` carries it to
+   * the same day (see `carry` there) and the calendar leaves it out of its day's total, so the curve,
+   * the razão and the calendar agree about every day's balance.
    */
-  const late = era === 'current' ? overdue(series.filter((s) => holding.has(s.accountId)), entries, today, deferrals) : [];
+  const late = era === 'current' ? overdue(planned, entries, today, deferrals) : [];
   const overdueCents = late.reduce((n, o) => n + o.amountCents, 0);
   if (era === 'current' && to > today) {
     const tomorrow = dayKey(addDays(todayD, 1));
-    for (const o of late) {
-      plan.set(tomorrow, (plan.get(tomorrow) ?? 0) + signed(o.amountCents, o.direction));
-    }
+    for (const o of late) bump(plan, tomorrow, o.amountCents, o.direction);
   }
 
   let running = openingBalance(accounts, entries, series, today, from, deferrals);
@@ -414,18 +451,18 @@ export function monthCurve(
   for (let d = 1; d <= days; d++) {
     const date = dayKey(new Date(anchorD.getFullYear(), anchorD.getMonth(), d));
     const actual = date <= today;
-    const delta = (actual ? moved.get(date) : plan.get(date)) ?? 0;
+    const flow = (actual ? moved.get(date) : plan.get(date)) ?? { in: 0, out: 0 };
+    const delta = flow.in - flow.out;
     running += delta;
 
     const point: CurvePoint = { day: d, date, balance: running, actual, moved: delta };
     points.push(point);
 
-    if (delta > 0) {
-      inflow += delta;
-      if (actual) inflowDone += delta;
-    } else if (delta < 0) {
-      outflow -= delta;
-      if (actual) outflowDone -= delta;
+    inflow += flow.in;
+    outflow += flow.out;
+    if (actual) {
+      inflowDone += flow.in;
+      outflowDone += flow.out;
     }
 
     if (actual) balanceNow = running;
@@ -480,13 +517,17 @@ function openingBalance(
   const eve = dayKey(addDays(parseDay(from), -1));
   if (eve <= today) return balanceToday(accounts, entries, eve);
 
+  // The same rules the curve and the tape project — a rule booked on a card moves no balance.
+  const holding = new Set(accounts.filter((a) => a.kind !== 'card').map((a) => a.id));
+  const planned = series.filter((s) => holding.has(s.accountId));
+
   let running = balanceToday(accounts, entries, today);
   // What is still owed from this month travels with the walk: a month reached from today has to
   // carry the bills today has not paid, or every month after it opens richer than it is.
-  for (const o of overdue(series, entries, today, deferrals)) {
+  for (const o of overdue(planned, entries, today, deferrals)) {
     running += signed(o.amountCents, o.direction);
   }
-  for (const o of project(series, dayKey(addDays(parseDay(today), 1)), eve, settled(entries), deferrals)) {
+  for (const o of project(planned, dayKey(addDays(parseDay(today), 1)), eve, settled(entries), deferrals)) {
     running += signed(o.amountCents, o.direction);
   }
   return running;
@@ -633,7 +674,7 @@ export function debtStatus(series: Series[]): DebtStatus[] {
     .filter((s): s is Series & { totalCount: number } => s.kind === 'debt' && s.totalCount != null)
     .map((s) => {
       const left = Math.max(0, s.totalCount - s.paidCount);
-      const start = startOfMonth(parseDay(s.startDate));
+      const start = parseDay(firstInstallment(s));
       return {
         series: s,
         paid: s.paidCount,
@@ -675,8 +716,17 @@ export interface TapeItem {
 export interface TapeDay {
   date: string;
   items: TapeItem[];
-  /** Signed total that landed on this day. */
+  /** Signed total that landed on this day, `carried` included. */
   moved: Cents;
+  /**
+   * What was overdue at today, signed, and counted on this day — non-zero only on tomorrow.
+   *
+   * The overdue rows themselves are drawn on the days they were due and move nothing there. This is
+   * where the forecast counts them, the same day `monthCurve` does, so the razão's balance on every
+   * day after today is the Home's. A screen that wants its rows to add up to the balance draws this
+   * as a line of its own ("atrasados de antes"); it has no rows of its own on this day to do it.
+   */
+  carried: Cents;
   /** The balance at the close of this day. */
   balance: Cents;
   /** True for days that have already happened. */
@@ -717,6 +767,9 @@ export function ledgerTape(
   deferrals: Map<string, Deferral>,
 ): TapeDay[] {
   const holding = new Set(accounts.filter((a) => a.kind !== 'card').map((a) => a.id));
+  // The same rules `monthCurve` reads, statements included, so the razão and the Home agree about
+  // the day a card's bill leaves the account.
+  series = withStatements(accounts, entries, series, today);
 
   const byDay = new Map<string, TapeItem[]>();
   const push = (date: string, item: TapeItem) => {
@@ -771,10 +824,28 @@ export function ledgerTape(
    * function — and an unpaid bill has moved no money. So the row shows, the balance does not budge,
    * and the arithmetic stays honest in both directions at once.
    */
-  for (const o of overdue(planned, entries, today, deferrals)) {
+  const late = overdue(planned, entries, today, deferrals);
+  for (const o of late) {
     if (o.on < from || o.on > to) continue;
     push(o.on, asItem(o, true));
   }
+
+  /*
+   * And where they *are* counted: tomorrow, the first day the forecast owns — the rule `monthCurve`
+   * applies, stated once there. Without this the tape walked through the rest of the month as if
+   * nothing were owed, and the razão and the Home disagreed about every day after today by exactly
+   * the overdue total.
+   *
+   * Only inside a window that holds tomorrow and opens on or before it. A window opening later is
+   * reached through `openingBalance`, which carries the overdue already; counting it again here
+   * would charge it twice.
+   */
+  const tomorrow = dayKey(addDays(parseDay(today), 1));
+  const carry =
+    tomorrow >= from && tomorrow <= to
+      ? late.reduce((n, o) => n + signed(o.amountCents, o.direction), 0)
+      : 0;
+  if (carry !== 0 && !byDay.has(tomorrow)) byDay.set(tomorrow, []);
 
   if (today >= from && today <= to && !byDay.has(today)) byDay.set(today, []);
 
@@ -795,11 +866,12 @@ export function ledgerTape(
       );
       // An overdue row is money still owed, not money that moved. It draws on its day and leaves
       // the running balance alone — see where it is pushed, above.
+      const carried = date === tomorrow ? carry : 0;
       const moved = items.reduce(
         (n, i) => (i.overdue ? n : n + signed(i.amountCents, i.direction)),
-        0,
+        carried,
       );
       running += moved;
-      return { date, items, moved, balance: running, actual: date <= today };
+      return { date, items, moved, carried, balance: running, actual: date <= today };
     });
 }

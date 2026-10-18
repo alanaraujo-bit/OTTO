@@ -2,6 +2,8 @@ import { api, OfflineError } from '@/lib/api';
 import type { Account, Deferral, Entry, Series } from '@/domain/model';
 import type { Cap } from '@/domain/cap';
 import type { Category } from '@/domain/category';
+import { isStatementSeries } from '@/domain/settlement';
+import { payStatement } from '@/domain/card';
 
 export interface Ledger {
   accounts: Account[];
@@ -120,12 +122,22 @@ export async function updateAccount(account: Account): Promise<void> {
 }
 
 export async function deleteAccount(id: string): Promise<void> {
-  await change((ledger) => ({
-    ...ledger,
-    accounts: ledger.accounts.filter((item) => item.id !== id),
-    series: ledger.series.filter((item) => item.accountId !== id),
-    entries: ledger.entries.filter((item) => item.accountId !== id),
-  }));
+  await change((ledger) => {
+    const gone = new Set(ledger.series.filter((item) => item.accountId === id).map((item) => item.id));
+    return {
+      ...ledger,
+      accounts: ledger.accounts.filter((item) => item.id !== id),
+      series: ledger.series.filter((item) => item.accountId !== id),
+      // An entry on another account can settle a rule booked here — every payment of a card's
+      // statement does (see `statementAnchor`). The money still moved, so the entry stays, and lets
+      // go of the rule the way `deleteSeries` makes it: the server refuses an entry pointing at a
+      // series that is not in the document, which would make the card impossible to delete.
+      entries: ledger.entries
+        .filter((item) => item.accountId !== id)
+        .map((item) => (item.seriesId !== null && gone.has(item.seriesId) ? { ...item, seriesId: null, settlesDate: null } : item)),
+      deferrals: ledger.deferrals.filter((item) => !gone.has(item.seriesId)),
+    };
+  });
 }
 
 export async function insertSeries(series: Series): Promise<void> {
@@ -217,6 +229,15 @@ export async function settleOccurrence(
   entry: Omit<Entry, 'seriesId' | 'settlesDate' | 'recordedAt'>,
 ): Promise<void> {
   await change((ledger) => {
+    if (isStatementSeries(seriesId)) {
+      // A card's statement: settled by amount, idempotent by the entry's id — see `payStatement`.
+      return payStatement(ledger, seriesId, scheduled, {
+        ...entry,
+        seriesId,
+        settlesDate: scheduled,
+        recordedAt: new Date().toISOString(),
+      });
+    }
     const taken = ledger.entries.some(
       (item) => item.seriesId === seriesId && (item.settlesDate ?? item.date) === scheduled,
     );

@@ -46,11 +46,23 @@ export function brl(value: Cents): string {
   return `${p.sign}${p.symbol}${NBSP}${p.whole},${p.cents}`;
 }
 
+/**
+ * To the nearest real, half away from zero — the one rule for every figure shown without centavos.
+ *
+ * Two used to exist. `brlShort` rounded and `Amount` without centavos simply dropped them, so the
+ * same R$ 1.343,50 read "1.344" in one line and "1.343" in the block above it. Anything that hides
+ * centavos goes through here. Rounds the magnitude, so a negative rounds the way its positive does.
+ */
+export function roundToReal(value: Cents): Cents {
+  const r = Math.round(Math.abs(value) / 100) * 100;
+  // `|| 0` keeps a negative that rounds to nothing from printing as "−R$ 0".
+  return (value < 0 ? -r : r) || 0;
+}
+
 /** Rounded to the real, for axis ticks and any label where centavos are noise. */
 export function brlShort(value: Cents): string {
-  const negative = value < 0;
-  const reais = Math.round(Math.abs(value) / 100);
-  return `${negative ? '−' : ''}R$${NBSP}${group(reais)}`;
+  const rounded = roundToReal(value);
+  return `${rounded < 0 ? '−' : ''}R$${NBSP}${group(Math.abs(rounded) / 100)}`;
 }
 
 /** Signed, for a delta. The sign is always shown, including the plus. */

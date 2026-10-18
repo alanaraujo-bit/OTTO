@@ -1,7 +1,7 @@
 import { addDays, endOfMonth, startOfMonth } from 'date-fns';
 import { dayKey, monthCurve, parseDay, project } from './projection';
 import { settled } from './settlement';
-import { statementCycle, statementTotal } from './card';
+import { statementCycle, statementTotal, withStatements } from './card';
 import { capReadings, type Cap } from './cap';
 import type { Account, Deferral, Entry, Series } from './model';
 import { brlShort, type Cents } from './money';
@@ -228,6 +228,9 @@ export function alertsFor(
   caps: Cap[] = [],
 ): Alert[] {
   const list: Alert[] = [];
+  // A card's statement is a bill like any other here: it can be what sinks the month, and it is a
+  // commitment tomorrow. `monthCurve` adds it on its own; `project` needs it handed in.
+  series = withStatements(accounts, entries, series, today);
 
   const trough = troughAlert(accounts, entries, series, today, deferrals);
   if (trough) list.push(trough);

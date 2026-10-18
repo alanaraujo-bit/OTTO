@@ -95,7 +95,9 @@ export const seedCategories: readonly { name: string; icon: CategoryIconName; hu
   { name: 'Lazer', icon: 'spark', hue: 'terracotta' },
   { name: 'Assinaturas', icon: 'repeat', hue: 'plum' },
   { name: 'Cartão', icon: 'card', hue: 'azure' },
-  { name: 'Dívidas', icon: 'wallet', hue: 'plum' },
+  // The ledger book, not the wallet: a debt is a page someone keeps on you — the caderneta do fiado
+  // — and the wallet belongs to money arriving. Both used to draw the wallet.
+  { name: 'Dívidas', icon: 'book', hue: 'plum' },
   { name: 'Renda', icon: 'wallet', hue: 'bronze' },
   { name: 'Outros', icon: 'tag', hue: 'teal' },
 ];
@@ -119,11 +121,46 @@ function hashName(name: string): number {
 }
 
 /**
+ * Words that say which glyph a name wants, before the hash is asked.
+ *
+ * The hash alone handed "Plataformas" the aeroplane, "Cartão de Crédito" the recurring arrows and
+ * "Venda" the heart that already meant Saúde — glyphs that were stable and meaningless. A name that
+ * says what it is gets the drawing that says it too. The rule is *one glyph per family*: two names
+ * of the same family share a glyph on purpose ("Renda", "Renda Extra" and "Venda" are all money
+ * arriving; "Cartão" and "Cartão de Crédito" are one thing typed twice), which is information, where
+ * the hash's collisions were noise. "Ajuste" takes the neutral tag, because a correction to the
+ * balance is not a kind of spending and no drawing should pretend it is.
+ *
+ * Matched against the lower-cased name, first rule wins, so the specific families sit above the
+ * broad ones. Only the glyph comes from here; the hue stays the hash's, because five hues cannot be
+ * assigned by meaning without two meanings colliding anyway.
+ */
+const families: readonly [RegExp, CategoryIconName][] = [
+  [/cart[aã]o|cr[eé]dito|fatura/, 'card'],
+  [/assinatura/, 'repeat'],
+  // Services that run on a current: the power bill, the internet, the streaming platforms.
+  [/plataforma|streaming|internet|\bluz\b|energia/, 'bolt'],
+  [/d[ií]vida|empr[eé]stimo|financiamento/, 'book'],
+  [/renda|sal[aá]rio|venda|freela|b[oô]nus/, 'wallet'],
+  [/aluguel|condom[ií]nio|moradia/, 'home'],
+  [/sa[uú]de|farm[aá]cia|m[eé]dic|rem[eé]dio/, 'heart'],
+  [/transporte|uber|combust[ií]vel|gasolina|[oô]nibus/, 'car'],
+  [/aliment|restaurante|lanche|ifood|comida/, 'fork'],
+  [/mercado|feira/, 'cart'],
+  [/viage|passage|hotel/, 'plane'],
+  [/\bpet\b|cachorro|gato|veterin/, 'pet'],
+  [/presente/, 'gift'],
+  [/lazer|cinema/, 'spark'],
+  [/ajuste/, 'tag'],
+];
+
+/**
  * The look a category gets when nobody has chosen one.
  *
  * A seeded name keeps the look that was designed for it — "Mercado" should be the grocery cart and
- * not whatever the hash lands on. Everything else is assigned from the name, which is what lets a
- * category the owner invented this morning appear in the donut already dressed.
+ * not whatever the hash lands on. A name that says what it is takes its family's glyph (above).
+ * Everything else is assigned from the name, which is what lets a category the owner invented this
+ * morning appear in the donut already dressed.
  */
 export function assignedLook(name: string): { icon: CategoryIconName; hue: CategoryHue } {
   const key = name.trim().toLocaleLowerCase('pt-BR');
@@ -131,11 +168,12 @@ export function assignedLook(name: string): { icon: CategoryIconName; hue: Categ
   if (seeded) return { icon: seeded.icon, hue: seeded.hue };
 
   const h = hashName(name);
+  const family = families.find(([words]) => words.test(key))?.[1];
   return {
     // `tag` is the deliberate default and is excluded from assignment: it means "no icon fits", and
     // handing it out at random would spend the one neutral glyph on a category that could have had
     // a real one.
-    icon: categoryIcons[1 + (h % (categoryIcons.length - 1))] as CategoryIconName,
+    icon: family ?? (categoryIcons[1 + (h % (categoryIcons.length - 1))] as CategoryIconName),
     hue: categoryHues[(h >>> 8) % categoryHues.length] as CategoryHue,
   };
 }
@@ -232,4 +270,37 @@ export function pickerOrder(entries: Entry[], series: Series[], categories: Cate
     .filter((n) => !seen.has(n.toLocaleLowerCase('pt-BR')));
 
   return [...mine.map((m) => m.name), ...authored, ...rest];
+}
+
+/** One slice of the spend ring, before it is dressed with a look and a ceiling. */
+export interface RingCut {
+  /** Unique within one ring. A category's own name; never a name for the remainder. */
+  key: string;
+  /** What the legend prints. */
+  category: string;
+  cents: number;
+  /** The aggregated remainder, which is not a category and opens nothing. */
+  isRest: boolean;
+}
+
+/** The remainder's key — no category name can be it, since names are trimmed words. */
+export const REST_KEY = '__rest__';
+/**
+ * The remainder's label. Not "Outros": that is a name owners give a real category, and when one did,
+ * the ring drew two slices called "Outros" — one that opens the category, one that is everything
+ * else — under one React key.
+ */
+export const REST_LABEL = 'Demais';
+
+/**
+ * The spend ring's cut: the `keep` largest categories, then everything after them as one remainder.
+ *
+ * Kept out of the screen so the one property that broke — every slice has its own key and its own
+ * label — is checked rather than eyeballed. Expects `spend` largest first, as `spendByCategory`
+ * returns it.
+ */
+export function ringCut(spend: { category: string; cents: number }[], keep: number): RingCut[] {
+  const top = spend.slice(0, keep).map((c) => ({ key: c.category, category: c.category, cents: c.cents, isRest: false }));
+  const rest = spend.slice(keep).reduce((n, c) => n + c.cents, 0);
+  return rest > 0 ? [...top, { key: REST_KEY, category: REST_LABEL, cents: rest, isRest: true }] : top;
 }

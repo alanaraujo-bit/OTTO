@@ -7,6 +7,7 @@ import type { Category } from '@/domain/category';
 import { alertsFor } from '@/domain/alerts';
 import { deferralMap } from '@/domain/deferral';
 import { dayKey } from '@/domain/projection';
+import { isStatementSeries } from '@/domain/settlement';
 import { reschedule } from '@/lib/notify';
 
 interface LedgerState {
@@ -55,7 +56,15 @@ export const useLedger = create<LedgerState>((set, get) => ({
 
   load: async () => {
     try {
-      const ledger = await readLedger();
+      const stored = await readLedger();
+      /*
+       * The rows that only anchor a card's statement payments (see `statementSeriesId`) are not
+       * rules the owner set, and no screen should list, edit, cost or project them: a statement is
+       * read from the card itself, by `withStatements`. They are dropped from the working copy only.
+       * Every write re-reads the document from the server (`change` in `repo.ts`), so the rows the
+       * payments depend on are never lost by being hidden here.
+       */
+      const ledger = { ...stored, series: stored.series.filter((s) => !isStatementSeries(s.id)) };
       set({ ...ledger, deferralsBySlot: deferralMap(ledger.deferrals), ready: true, error: null });
 
       /*

@@ -1,6 +1,7 @@
 import { addMonths, endOfMonth, startOfMonth } from 'date-fns';
 import { dayKey, occurrences, parseDay } from './projection';
 import { signed, type Series } from './model';
+import { firstInstallment } from './settlement';
 import type { Cents } from './money';
 
 /**
@@ -60,7 +61,9 @@ export function commitmentFor(s: Series, today: string): Commitment {
     s.kind === 'debt' && s.totalCount != null
       ? (() => {
           const left = Math.max(0, s.totalCount - s.paidCount);
-          const start = startOfMonth(parseDay(s.startDate));
+          // Installment 1's month, which is not the start's own month for a debt created after
+          // its due day — see `firstInstallment`.
+          const start = parseDay(firstInstallment(s));
           return {
             count: left,
             cents: left * s.amountCents,

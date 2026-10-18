@@ -1,4 +1,5 @@
 import type { Entry, Series } from './model';
+import { isStatementSeries } from './settlement';
 
 /**
  * What counts as spend.
@@ -27,8 +28,14 @@ export function paymentSeries(series: Series[]): Set<string> {
   return new Set(series.filter((s) => s.kind === 'card').map((s) => s.id));
 }
 
-/** True when this entry is money spent, as opposed to money moved. */
+/**
+ * True when this entry is money spent, as opposed to money moved.
+ *
+ * A payment of a card's statement is the same transfer whether or not its series row reached the
+ * list the caller holds — the store keeps those rows out of every screen (see `state/ledger.ts`) —
+ * so it is recognised by its id, which `settlement.ts` derives and nobody types.
+ */
 export function isSpend(e: Entry, payments: Set<string>): boolean {
   if (e.direction !== 'out') return false;
-  return e.seriesId === null || !payments.has(e.seriesId);
+  return e.seriesId === null || !(payments.has(e.seriesId) || isStatementSeries(e.seriesId));
 }

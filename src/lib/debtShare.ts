@@ -1,5 +1,5 @@
 import { api } from './api';
-import { numbered, type DebtHistory } from '@/domain/settlement';
+import { firstInstallment, numbered, type DebtHistory } from '@/domain/settlement';
 
 export interface DebtShareSummary {
   token: string;
@@ -55,9 +55,10 @@ export function historyOf(debt: PublicDebtShare): DebtHistory {
     })),
     debt.paidCount,
     debt.totalCount,
-    // Already in the public payload, so the reader on the web numbers a payment with the same
-    // arithmetic the owner's app does — without the payload ever having to carry a deferral.
-    debt.startDate,
+    // Both fields are already in the public payload, so the reader on the web numbers a payment
+    // with the same arithmetic the owner's app does — without the payload ever having to carry a
+    // deferral.
+    firstInstallment(debt),
   );
 }
 

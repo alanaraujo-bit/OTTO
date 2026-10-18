@@ -1,5 +1,6 @@
 import { router } from 'expo-router';
 import { create } from 'zustand';
+import { isStatementSeries } from '@/domain/settlement';
 
 /** The tabs, in the order they sit in the bar. The order *is* the geometry. */
 export const TABS = ['home', 'ledger', 'stats', 'settings'] as const;
@@ -62,4 +63,18 @@ export const useNav = create<NavState>((set, get) => ({
  */
 export function tabShift(direction: number, amount = 34): number {
   return direction * amount;
+}
+
+/**
+ * Where a forecast row opens.
+ *
+ * A rule's occurrence opens the rule, where "paguei" and "adiar" live. A card's statement has no
+ * rule to open — its amount is the card's purchases, its day the card's contract — so the one thing
+ * it can be asked to do, be paid, is the door: `lançar`, already filled with the statement, the same
+ * screen the razão's swipe sends any forecast to.
+ */
+export function forecastRoute(seriesId: string, scheduled: string) {
+  return isStatementSeries(seriesId)
+    ? ({ pathname: '/lancar', params: { settlesSeries: seriesId, settlesDate: scheduled } } as const)
+    : ({ pathname: '/recorrencia', params: { id: seriesId } } as const);
 }

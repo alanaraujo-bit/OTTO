@@ -1,7 +1,12 @@
-import { addMonths, differenceInCalendarDays, getDaysInMonth, startOfMonth } from 'date-fns';
-import { dayKey, parseDay } from './projection';
-import type { Account, Entry } from './model';
+import { addDays, addMonths, differenceInCalendarDays, format, getDaysInMonth, parseISO, startOfMonth } from 'date-fns';
+import { isStatementSeries, statementSeriesId } from './settlement';
+import type { Account, Entry, Series } from './model';
 import type { Cents } from './money';
+
+// Local rather than imported from `projection`: projection reads the statements this file forecasts,
+// and a module cycle between the two would hang on whichever loaded first.
+const dayKey = (d: Date) => format(d, 'yyyy-MM-dd');
+const parseDay = (s: string) => parseISO(s);
 
 /**
  * The card cycle.
@@ -133,4 +138,181 @@ export function statementItems(entries: Entry[], card: Account, s: Statement): E
   return entries
     .filter((e) => e.accountId === card.id && e.date >= s.from && e.date <= s.to)
     .sort((a, b) => (a.date > b.date ? -1 : a.date < b.date ? 1 : 0));
+}
+
+/**
+ * How many statements ahead are read per card. A year and a month: the farthest any screen projects
+ * (the razão's six months, the assistant's 400-day window) never reaches past it.
+ */
+const STATEMENTS_AHEAD = 13;
+
+/** The category a projected statement is filed under — the seed one `domain/category` dresses as a card. */
+export const STATEMENT_CATEGORY = 'Cartão';
+
+/**
+ * Each card's statements that are still to be paid, as rules the projection engine can read.
+ *
+ * The forecast only knew series, and a statement is not one — so the one bill every card holder
+ * pays every month was missing from every "a pagar" figure, and the checking balance sailed through
+ * the due date untouched. This closes that by saying each statement in the only shape the engine,
+ * and every screen built on it, already speaks: a one-shot rule, `startDate = endDate = due`, so
+ * `occurrences()` emits it exactly once, on the day it falls due, and the curve, the razão, the
+ * calendar, the alerts and the assistant all pick it up without learning anything new.
+ *
+ * **The amount is the statement, less what has been paid against it.** The statement is
+ * `statementTotal` over its cycle — the open cycle grows with every purchase booked on the card, a
+ * closed one has stopped moving. A payment is an entry carrying `statementSeriesId(card)` with the
+ * statement's due month in `settlesDate`; whatever has been paid is netted out, so a partial payment
+ * leaves the remainder projected and a full one leaves nothing. A cycle with nothing to pay — no
+ * purchases, or refunds that cancel them — projects nothing.
+ *
+ * Matched by the **month** of the due date rather than the day, the rule `Deferral` follows for the
+ * same reason: a card has one statement per due month, and the owner correcting the due day from
+ * the 10th to the 12th must not hand a paid statement back to the forecast.
+ *
+ * **Only statements due today or later.** One whose day has passed is not carried as overdue, and
+ * that is a choice, not an oversight: every statement before this existed was paid, if at all, by an
+ * ordinary lançamento that links to nothing, and OTTO has no honest way to tell those apart from a
+ * statement never paid — guessing by category or description is exactly what `spend.ts` rules out.
+ * Projecting them would put months of paid bills back on the owner as "vencido". The cost: a
+ * statement genuinely missed drops off the forecast the day after it was due.
+ *
+ * **Booked against the account that pays it.** A statement moves money on the account it is paid
+ * from, never on the card — the purchases already sit there — so the rule has to name a conta for
+ * the curve to count it and for "paguei" to land somewhere. That is the account the last payment of
+ * this card came from; before there is one, the first conta corrente in the ledger, then any conta
+ * that holds money. It is a default the keypad shows and the owner can change, not a fact. A ledger
+ * with no conta at all has nowhere to pay from and projects nothing.
+ */
+export function statementForecast(accounts: Account[], entries: Entry[], today: string): Series[] {
+  const holding = accounts.filter((a) => a.kind !== 'card');
+  const fallback = holding.find((a) => a.kind === 'checking') ?? holding[0];
+  if (!fallback) return [];
+
+  const out: Series[] = [];
+  for (const card of accounts) {
+    let s = statementCycle(card, today);
+    if (!s) continue;
+
+    const id = statementSeriesId(card.id);
+    const charges = entries.filter((e) => e.accountId === card.id);
+    const payments = entries.filter((e) => e.seriesId === id);
+    // Nothing is ever booked past the newest charge, so a cycle opening after it is empty and so is
+    // every one after that.
+    const lastCharge = charges.reduce((max, e) => (e.date > max ? e.date : max), '');
+    const lastPayment = payments.reduce<Entry | null>((a, e) => (a === null || e.date >= a.date ? e : a), null);
+    const payer = holding.find((a) => a.id === lastPayment?.accountId) ?? fallback;
+
+    for (let n = 0; s && n < STATEMENTS_AHEAD && s.from <= lastCharge; n++) {
+      const due = s.due;
+      const paid = payments
+        .filter((e) => (e.settlesDate ?? e.date).slice(0, 7) === due.slice(0, 7))
+        .reduce((sum, e) => sum + (e.direction === 'out' ? e.amountCents : -e.amountCents), 0);
+      const left = statementTotal(charges, card, s) - paid;
+      if (left > 0) {
+        out.push({
+          id,
+          kind: 'card',
+          title: `Fatura ${card.name}`,
+          category: STATEMENT_CATEGORY,
+          accountId: payer.id,
+          amountCents: left,
+          direction: 'out',
+          dayOfMonth: parseDay(due).getDate(),
+          startDate: due,
+          endDate: due,
+          totalCount: null,
+          paidCount: 0,
+          counterparty: null,
+          linkedShareToken: null,
+        });
+      }
+      s = statementCycle(card, dayKey(addDays(parseDay(due), 1)));
+    }
+  }
+  return out;
+}
+
+/**
+ * The rules the forecast reads: the ledger's own, plus each card's statements still to be paid.
+ *
+ * Idempotent — any statement row already in `series` is dropped before the forecast's are added —
+ * so a screen that passes the result into `monthCurve`, which applies this itself, cannot count a
+ * statement twice. Dropping the stored row also matters on its own: that row only anchors payments
+ * (see `statementSeriesId`) and has no amount of its own to project.
+ *
+ * Pass this, not `series`, to every function that projects — `project`, `dayItems`, `upcoming`,
+ * `overdue`, `calendarDays`. Not to `commitments`: a statement is not a commitment the owner set,
+ * and its amount is not a monthly cost.
+ */
+export function withStatements(
+  accounts: Account[],
+  entries: Entry[],
+  series: Series[],
+  today: string,
+): Series[] {
+  return [
+    ...series.filter((s) => !isStatementSeries(s.id)),
+    ...statementForecast(accounts, entries, today),
+  ];
+}
+
+/**
+ * The series row a card's payments point at, written the first time one of its statements is paid.
+ *
+ * Booked against the card itself, so that it moves no balance and nothing reading the stored rules
+ * — including an older build of this app — projects money from it; its amount is zero for the same
+ * reason. Everything a statement actually is comes from `statementForecast`.
+ */
+export function statementAnchor(card: Account, since: string): Series {
+  return {
+    id: statementSeriesId(card.id),
+    kind: 'card',
+    title: `Fatura ${card.name}`,
+    category: STATEMENT_CATEGORY,
+    accountId: card.id,
+    amountCents: 0,
+    direction: 'out',
+    dayOfMonth: card.dueDay ?? parseDay(since).getDate(),
+    startDate: since,
+    endDate: null,
+    totalCount: null,
+    paidCount: 0,
+    counterparty: null,
+    linkedShareToken: null,
+  };
+}
+
+/**
+ * The ledger document with one statement payment added — the change `settleOccurrence` writes.
+ *
+ * Pure and here, rather than inline in the repository, so the round trip is checked in plain Node:
+ * the document this returns is the one the server validates (`tools/ledger-check.mjs` runs it
+ * through the server's own validator).
+ *
+ * Idempotent by the entry's id, not by the statement: a second payment of one statement is the rest
+ * of a partial one, a real thing to record, while the same entry arriving twice is a retry of a lost
+ * answer (see `change` in `repo.ts`). The anchor row is added with the card's first payment and
+ * found there by every later one.
+ */
+export function payStatement<L extends { accounts: Account[]; series: Series[]; entries: Entry[] }>(
+  ledger: L,
+  seriesId: string,
+  scheduled: string,
+  entry: Entry,
+): L {
+  if (ledger.entries.some((item) => item.id === entry.id)) return ledger;
+  const card = ledger.accounts.find((a) => a.kind === 'card' && statementSeriesId(a.id) === seriesId);
+  if (!card) throw new Error('Esse cartão não existe mais.');
+  // Paid from a card, the money would move nowhere the balance can see and the statement would
+  // still read as paid — a bill retired by a number that left no account.
+  const payer = ledger.accounts.find((a) => a.id === entry.accountId);
+  if (!payer || payer.kind === 'card') throw new Error('A fatura se paga de uma conta, não de um cartão.');
+  return {
+    ...ledger,
+    series: ledger.series.some((item) => item.id === seriesId)
+      ? ledger.series
+      : [...ledger.series, statementAnchor(card, scheduled)],
+    entries: [...ledger.entries, { ...entry, seriesId, settlesDate: scheduled }],
+  };
 }
