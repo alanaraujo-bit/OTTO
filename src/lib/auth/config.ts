@@ -1,6 +1,7 @@
 /**
  * Google OAuth client IDs. Empty until BLOCKERS.md B1 is resolved.
- * When they land here the real flow activates with no UI change.
+ * Filling one in makes the sign-in screens draw the Google button — and `provider.ts` still has to
+ * gain the flow behind it, which today only throws.
  */
 export const GOOGLE_OAUTH = {
   androidClientId: '',

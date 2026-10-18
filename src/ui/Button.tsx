@@ -14,6 +14,9 @@ import { Check } from './Icon';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
+/** The same 0.42 `SocialRow` dims a busy button to. */
+const INERT_OPACITY = 0.42;
+
 type Variant = 'filled' | 'outline' | 'ghost';
 
 export interface ButtonProps {
@@ -49,6 +52,8 @@ export function Button({
   const press = useSharedValue(0);
   const done = useSharedValue(0);
   const inert = disabled || loading || success;
+  // Disabled reads as disabled; a success is a disabled control too, but one that just did its job.
+  const dim = disabled && !success;
 
   useEffect(() => {
     if (!success) {
@@ -61,10 +66,18 @@ export function Button({
       : withSpring(1, spring.crisp);
   }, [success, done, reduced]);
 
-  const shell = useAnimatedStyle(() => ({
-    transform: [{ scale: 1 - press.value * 0.02 }],
-    opacity: 1 - press.value * 0.12,
-  }));
+  /*
+   * The dimming lives in the animated style, not beside it: an animated `opacity` is applied after
+   * the static styles and wins, so a separate `inert` opacity in the array was overwritten on every
+   * frame and a disabled button looked exactly like an enabled one.
+   */
+  const shell = useAnimatedStyle(
+    () => ({
+      transform: [{ scale: 1 - press.value * 0.02 }],
+      opacity: (dim ? INERT_OPACITY : 1) * (1 - press.value * 0.12),
+    }),
+    [dim],
+  );
 
   const labelStyle = useAnimatedStyle(() => ({
     opacity: 1 - done.value,
@@ -96,7 +109,6 @@ export function Button({
         variant === 'filled' && styles.filled,
         variant === 'outline' && styles.outline,
         variant === 'ghost' && styles.ghost,
-        disabled && !success && styles.inert,
         shell,
       ]}
     >
@@ -135,7 +147,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   ghost: { minHeight: HIT, backgroundColor: 'transparent' },
-  inert: { opacity: 0.42 },
   stack: { alignItems: 'center', justifyContent: 'center' },
   layer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   leading: { marginRight: space.md },

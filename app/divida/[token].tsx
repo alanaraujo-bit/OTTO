@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppState, Linking, Platform, ScrollView, StyleSheet, View } from 'react-native';
-import { addMonths, format, startOfMonth } from 'date-fns';
+import { addMonths, format, getDaysInMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Screen } from '@/ui/Screen';
 import { Amount } from '@/ui/Amount';
 import { Button } from '@/ui/Button';
@@ -10,15 +10,22 @@ import { Press } from '@/ui/Press';
 import { Wordmark } from '@/ui/Wordmark';
 import { PaymentHistory } from '@/ui/PaymentHistory';
 import { Txt } from '@/theme/text';
-import { color, space } from '@/theme/tokens';
+import { color, space, type } from '@/theme/tokens';
 import { acceptDebtShare, apkUrl, historyOf, readPublicDebt, type PublicDebtShare } from '@/lib/debtShare';
 import { useSession } from '@/lib/auth/session';
 import { useLedger } from '@/state/ledger';
 import { useSnackbar } from '@/ui/Snackbar';
-import { parseDay } from '@/domain/projection';
+import { dayKey, parseDay } from '@/domain/projection';
+import { brl, parts } from '@/domain/money';
+import { firstInstallment } from '@/domain/settlement';
 import { ApiError } from '@/lib/api';
 
-const REFRESH_MS = 5_000;
+/**
+ * How often an open page re-reads the share. "Ao vivo" means a payment the owner records shows up
+ * while the page is being looked at — within a quarter of a minute is that; every five seconds was
+ * twelve requests a minute per open link for a figure that changes a few times a month.
+ */
+const REFRESH_MS = 15_000;
 const PREVIEW: PublicDebtShare = {
   ownerName: 'Alan',
   recipientName: 'Gabriel',
@@ -50,6 +57,15 @@ export default function SharedDebt() {
   const [error, setError] = useState<string | null>(null);
   const [connection, setConnection] = useState<'loading' | 'live' | 'offline' | 'revoked'>('loading');
   const [accepting, setAccepting] = useState(false);
+  /**
+   * Whether a payload is on screen, read by the poll without being one of its dependencies. With
+   * `debt` itself in `refresh`'s deps, every answer recreated `refresh`, which re-ran the polling
+   * effect, which fetched again at once — a request loop limited only by the network's latency.
+   */
+  const shown = useRef(false);
+  useEffect(() => {
+    shown.current = debt !== null;
+  }, [debt]);
 
   const refresh = useCallback(async (quiet = false) => {
     if (!token) return;
@@ -72,34 +88,71 @@ export default function SharedDebt() {
         setConnection('revoked');
       } else {
         setConnection('offline');
-        if (!quiet || !debt) {
-          setError(reason instanceof Error ? reason.message : 'Não consegui abrir este acompanhamento.');
+        if (!quiet || !shown.current) {
+          setError(reason instanceof Error ? reason.message : 'Não foi possível abrir este acompanhamento.');
         }
       }
     } finally {
       if (!quiet) setLoading(false);
     }
-  }, [debt, token]);
+  }, [token]);
 
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(true), REFRESH_MS);
-    const foreground = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void refresh(true);
-    });
-    return () => {
-      clearInterval(timer);
-      foreground.remove();
-    };
-  }, [refresh]);
+  /*
+   * The poll runs only while someone can see it: focused (cleanup runs on blur) and in the
+   * foreground. Arriving or coming back to either reads at once, so the page is never stale on
+   * return — loudly the first time, quietly once there is something on screen to keep.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      void refresh(shown.current);
+      let timer: ReturnType<typeof setInterval> | null = null;
+      const start = () => {
+        if (timer) return;
+        timer = setInterval(() => void refresh(true), REFRESH_MS);
+      };
+      const stop = () => {
+        if (timer) clearInterval(timer);
+        timer = null;
+      };
+      if (AppState.currentState === 'active') start();
+      const foreground = AppState.addEventListener('change', (state) => {
+        if (state === 'active') {
+          void refresh(true);
+          start();
+        } else {
+          stop();
+        }
+      });
+      return () => {
+        stop();
+        foreground.remove();
+      };
+    }, [refresh]),
+  );
 
   const finishes = useMemo(() => {
     if (!debt) return '';
     return format(
-      addMonths(startOfMonth(parseDay(debt.startDate)), debt.totalCount - 1),
+      // Counted from the first installment, not the start's month: a debt created after its due day
+      // pays nothing that month, and the app numbers it the same way.
+      addMonths(parseDay(firstInstallment(debt)), debt.totalCount - 1),
       "MMMM 'de' yyyy",
       { locale: ptBR },
     );
+  }, [debt]);
+
+  /*
+   * The next installment as a date, not a day number. "próximo dia 10" made the reader work out
+   * which month, and said nothing when that day had already passed unpaid (DIV-04). Counted the
+   * way the app numbers installments — from the first one, `paidCount` months on — and clamped to
+   * the month's length the way the projection clamps a 31.
+   */
+  const next = useMemo(() => {
+    if (!debt || debt.paidCount >= debt.totalCount) return null;
+    const month = addMonths(parseDay(firstInstallment(debt)), debt.paidCount);
+    const day = Math.min(debt.dayOfMonth, getDaysInMonth(month));
+    const key = dayKey(new Date(month.getFullYear(), month.getMonth(), day));
+    return { key, late: key < dayKey(new Date()) };
   }, [debt]);
 
   // Recomputed only when the payload changes, not on every poll tick that returns the same rows.
@@ -117,10 +170,16 @@ export default function SharedDebt() {
     try {
       await acceptDebtShare(token);
       await loadLedger();
-      snack('Dívida adicionada às suas recorrências.', 'info');
+      // Named from the reader's side: what the owner owes them arrives as money to receive (DIV-08).
+      snack(
+        debt?.direction === 'out'
+          ? 'Valor a receber adicionado às suas recorrências.'
+          : 'Dívida adicionada às suas recorrências.',
+        'info',
+      );
       router.replace('/recorrencias');
     } catch (reason) {
-      snack(reason instanceof Error ? reason.message : 'Não consegui adicionar esta dívida.', 'error');
+      snack(reason instanceof Error ? reason.message : 'Não foi possível adicionar ao seu OTTO.', 'error');
       setAccepting(false);
     }
   };
@@ -134,10 +193,15 @@ export default function SharedDebt() {
       >
         <View style={styles.brand}>
           <Wordmark />
+          {/*
+            Connection status in ink, not in traffic-light colours (DIV-02): a green dot on a page
+            about a debt reads as "paid", and amber as "late". Live is a filled dot; reconnecting is
+            an empty ring and fainter words.
+          */}
           {debt ? (
             <View style={styles.live}>
               <View style={[styles.liveDot, connection === 'offline' ? styles.offlineDot : null]} />
-              <Txt variant="micro" f="sansMedium" t={connection === 'offline' ? 'warning' : 'muted'}>
+              <Txt variant="micro" f="sansMedium" t={connection === 'offline' ? 'faint' : 'muted'}>
                 {connection === 'offline' ? 'RECONECTANDO' : 'AO VIVO'}
               </Txt>
             </View>
@@ -171,14 +235,26 @@ export default function SharedDebt() {
                   : `${debt.recipientName} deve a ${debt.ownerName}`}
               </Txt>
               <Txt variant="title" f="sansSemibold" style={styles.title}>{debt.title}</Txt>
-              <Amount
-                cents={(debt.totalCount - debt.paidCount) * debt.amountCents}
-                size="hero"
-                tone="ink"
-              />
-              <Txt variant="label" t="muted" style={styles.remaining}>
-                ainda em aberto
-              </Txt>
+              {/*
+                A finished debt says so (DIV-03). "R$ 0,00 ainda em aberto" is arithmetically true
+                and emotionally wrong — the one moment this page exists to celebrate, read as an
+                empty balance.
+              */}
+              {debt.paidCount >= debt.totalCount ? (
+                <>
+                  <Txt variant="display" f="sansSemibold">Quitada</Txt>
+                  <Txt variant="label" t="muted" style={styles.remaining}>
+                    {`todas as ${debt.totalCount} parcelas pagas`}
+                  </Txt>
+                </>
+              ) : (
+                <>
+                  <HeroFigure cents={(debt.totalCount - debt.paidCount) * debt.amountCents} />
+                  <Txt variant="label" t="muted" style={styles.remaining}>
+                    ainda em aberto
+                  </Txt>
+                </>
+              )}
             </View>
 
             <View style={styles.progress}>
@@ -207,15 +283,21 @@ export default function SharedDebt() {
               )}
               <View style={styles.facts}>
                 <Fact label="cada parcela" value={<Amount cents={debt.amountCents} size="body" tone="muted" />} />
-                <Fact label="próximo dia" value={`${debt.dayOfMonth}`} />
-                <Fact label="termina" value={finishes} last />
+                {next ? (
+                  <Fact
+                    label={next.late ? 'parcela vencida' : 'próxima parcela'}
+                    value={format(parseDay(next.key), "d 'de' MMMM", { locale: ptBR })}
+                    tone={next.late ? 'warning' : 'muted'}
+                  />
+                ) : null}
+                <Fact label={next ? 'termina' : 'terminou'} value={finishes} last />
               </View>
             </View>
 
             <PaymentHistory {...history} total={debt.totalCount} />
 
             <View style={styles.actions}>
-              {Platform.OS !== 'web' ? (
+              {debt.paidCount >= debt.totalCount ? null : Platform.OS !== 'web' ? (
                 <Button
                   label={debt.direction === 'out' ? 'Adicionar como valor a receber' : 'Adicionar como dívida minha'}
                   onPress={() => void accept()}
@@ -255,12 +337,53 @@ export default function SharedDebt() {
   );
 }
 
-function Fact({ label, value, last = false }: { label: string; value: ReactNode; last?: boolean }) {
+/**
+ * The open balance at display size, as one line of text.
+ *
+ * `Amount` is three Text nodes in a row: TalkBack read it as "R$", "29.160", ",00", and at 1.5×
+ * system font a five-figure debt pushed past the panel edge, since a row of Texts cannot shrink
+ * (DIV-05, DIV-06). One Text with nested spans keeps the same typography — symbol and centavos
+ * smaller and faint on the figure's baseline — reads as one phrase, and may scale itself down to
+ * fit on one line.
+ */
+function HeroFigure({ cents }: { cents: number }) {
+  const p = parts(cents);
+  return (
+    <Txt
+      variant="display"
+      f="monoSemibold"
+      tabular
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.5}
+      accessibilityLabel={brl(cents)}
+    >
+      {/* The spans keep the display line height: a smaller one on a nested span makes Android
+          size the whole line to it and clip the figure. */}
+      <Txt variant="body" f="mono" t="faint" style={styles.heroMinor}>{`${p.sign}${p.symbol} `}</Txt>
+      {p.whole}
+      <Txt variant="body" f="mono" t="faint" tabular style={styles.heroMinor}>{`,${p.cents}`}</Txt>
+    </Txt>
+  );
+}
+
+/** One fact. Dates written as words are sans; figures arrive as `Amount` nodes. */
+function Fact({
+  label,
+  value,
+  last = false,
+  tone = 'muted',
+}: {
+  label: string;
+  value: ReactNode;
+  last?: boolean;
+  tone?: 'muted' | 'warning';
+}) {
   return (
     <View style={[styles.fact, last ? styles.factLast : null]}>
       <Txt variant="micro" t="faint">{label}</Txt>
       {typeof value === 'string' ? (
-        <Txt variant="body" f="monoMedium" t="muted" tabular>{value}</Txt>
+        <Txt variant="body" t={tone} numberOfLines={1} style={styles.factValue}>{value}</Txt>
       ) : value}
     </View>
   );
@@ -272,8 +395,8 @@ const styles = StyleSheet.create({
   web: { width: '100%', maxWidth: 620, alignSelf: 'center', minHeight: '100%' },
   brand: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   live: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.positive },
-  offlineDot: { backgroundColor: color.warning },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.ink },
+  offlineDot: { backgroundColor: 'transparent', borderWidth: 1, borderColor: color.inkFaint },
   state: { paddingTop: 120 },
   stateCopy: { paddingTop: space.md },
   retry: { paddingTop: space.xl },
@@ -300,6 +423,8 @@ const styles = StyleSheet.create({
     borderBottomColor: color.hairline,
   },
   factLast: { borderBottomWidth: 0 },
+  factValue: { flexShrink: 1, paddingLeft: space.lg, textAlign: 'right' },
+  heroMinor: { lineHeight: type.display.leading },
   actions: { paddingTop: space.xxl },
   secondaryAction: { paddingTop: space.md },
   privateCopy: { paddingTop: space.md },

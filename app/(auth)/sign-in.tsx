@@ -14,6 +14,7 @@ import { useFocusSignal } from '@/ui/FocusSignal';
 import { Txt } from '@/theme/text';
 import { space } from '@/theme/tokens';
 import { localAuth, AuthError } from '@/lib/auth/provider';
+import { appleConfigured, googleConfigured } from '@/lib/auth/config';
 import { useSession } from '@/lib/auth/session';
 import { validateEmail, validatePassword } from '@/lib/validation';
 
@@ -184,8 +185,8 @@ function SignInBody() {
 
         <Reveal index={5} style={styles.social}>
           <SocialRow
-            onGoogle={() => void social('google')}
-            onApple={() => void social('apple')}
+            onGoogle={googleConfigured() ? () => void social('google') : undefined}
+            onApple={appleConfigured() ? () => void social('apple') : undefined}
             busy={busy !== null}
           />
         </Reveal>
@@ -202,9 +203,14 @@ function SignInBody() {
             // does. The stack animation is the same 320ms it always was; this is what makes it
             // read as intentional rather than as a default.
             look(1);
-            router.push('/sign-up');
+            // A debt link waiting behind this login has to survive the detour to sign-up too.
+            router.push(
+              typeof next === 'string' && next.startsWith('/divida/')
+                ? { pathname: '/sign-up', params: { next } }
+                : '/sign-up',
+            );
           }}
-          hitSlop={12}
+          hitSlop={15}
           accessibilityRole="button"
         >
           <Txt variant="label" f="sansSemibold" t="ink">

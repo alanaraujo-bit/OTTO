@@ -49,16 +49,23 @@ function SocialButton({
 
 /**
  * Grouped by a rule above, the way every group in this app is — no "ou continue com" divider.
+ *
+ * **A provider is drawn only when it is handed a handler**, and the screens hand one only when that
+ * provider can actually sign someone in on this build (`googleConfigured` / `appleConfigured`). Two
+ * buttons that always answered with an error snackbar were a row of controls naming actions they
+ * could not perform — on Android, every one of them. With neither available the whole group,
+ * legend included, is not drawn.
  */
 export function SocialRow({
   onGoogle,
   onApple,
   busy,
 }: {
-  onGoogle: () => void;
-  onApple: () => void;
+  onGoogle?: () => void;
+  onApple?: () => void;
   busy?: boolean;
 }) {
+  if (!onGoogle && !onApple) return null;
   return (
     <View>
       <View style={styles.rule} />
@@ -66,9 +73,13 @@ export function SocialRow({
         OU ENTRE COM
       </Txt>
       <View style={styles.row}>
-        <SocialButton label="Google" mark={<GoogleMark />} onPress={onGoogle} busy={busy} />
-        <View style={styles.gap} />
-        <SocialButton label="Apple" mark={<AppleMark />} onPress={onApple} busy={busy} />
+        {onGoogle ? (
+          <SocialButton label="Google" mark={<GoogleMark />} onPress={onGoogle} busy={busy} />
+        ) : null}
+        {onGoogle && onApple ? <View style={styles.gap} /> : null}
+        {onApple ? (
+          <SocialButton label="Apple" mark={<AppleMark />} onPress={onApple} busy={busy} />
+        ) : null}
       </View>
     </View>
   );

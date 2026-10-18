@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Redirect, router } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
 import { Press } from '@/ui/Press';
@@ -10,6 +10,7 @@ import { Txt } from '@/theme/text';
 import { space } from '@/theme/tokens';
 import { useLock } from '@/lib/auth/lock';
 import { useSession } from '@/lib/auth/session';
+import { safeNext } from '@/lib/auth/guard';
 
 const ENTER = { delay: 40, step: 78, cap: 3, rise: 12 } as const;
 
@@ -27,15 +28,28 @@ const ENTER = { delay: 40, step: 78, cap: 3, rise: 12 } as const;
  * after the trinco was switched on, and a fingerprint the phone no longer knows would otherwise make
  * this a door with no handle on either side. Signing out clears the session and lands on sign-in,
  * which costs the owner a login and never costs them their ledger — the database is untouched.
+ *
+ * **Opening the door lands where the owner was going.** `LockGate` sends a deep link or a
+ * notification tap here with the route it interrupted as `next`; that is where unlocking goes, so a
+ * tap on "fatura vence amanhã" ends on that day in the calendar and not on the Home. A cold start
+ * from the launcher has no `next` and lands on the Home, as it always did.
  */
 export default function Desbloquear() {
   const session = useSession((s) => s.session);
   const unlock = useLock((s) => s.unlock);
   const biometry = useLock((s) => s.biometry);
   const signOut = useSession((s) => s.signOut);
+  const { next } = useLocalSearchParams<{ next?: string }>();
 
   const [asking, setAsking] = useState(true);
   const [refused, setRefused] = useState(false);
+  /** Leaving arms first, like "Sair da conta" in ajustes: one stray tap should not cost a login. */
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    if (!leaving) return;
+    const t = setTimeout(() => setLeaving(false), 4000);
+    return () => clearTimeout(t);
+  }, [leaving]);
   /** Strict Mode mounts effects twice in dev; two prompts stacked read as the sensor glitching. */
   const fired = useRef(false);
 
@@ -43,7 +57,7 @@ export default function Desbloquear() {
     setAsking(true);
     const ok = await unlock();
     if (ok) {
-      router.replace('/home');
+      router.replace((safeNext(next) ?? '/home') as never);
       return;
     }
     setAsking(false);
@@ -75,7 +89,7 @@ export default function Desbloquear() {
           </Txt>
           <Txt variant="body" t="muted" style={styles.sub}>
             {refused
-              ? 'Não consegui confirmar que é você.'
+              ? 'Não foi possível confirmar que é você.'
               : `${biometry?.name ?? 'Biometria'} para abrir seu razão.`}
           </Txt>
         </Reveal>
@@ -94,14 +108,21 @@ export default function Desbloquear() {
           {refused ? (
             <Press
               onPress={() => {
+                if (!leaving) {
+                  setLeaving(true);
+                  return;
+                }
                 void signOut();
                 router.replace('/sign-in');
               }}
               style={styles.exit}
-              accessibilityLabel="Sair da conta"
+              accessibilityLabel={leaving ? 'Toque de novo para sair' : 'Sair da conta'}
             >
-              <Txt variant="label" t="faint" center>
-                Sair da conta
+              <Txt variant="label" t={leaving ? 'ink' : 'faint'} center>
+                {leaving ? 'Toque de novo para sair' : 'Sair da conta'}
+              </Txt>
+              <Txt variant="micro" t="faint" center style={styles.exitNote}>
+                Entre de novo com seu e-mail e senha. Seu razão continua guardado.
               </Txt>
             </Press>
           ) : null}
@@ -117,4 +138,5 @@ const styles = StyleSheet.create({
   sub: { paddingTop: space.sm },
   actions: { paddingTop: space.xxl },
   exit: { paddingTop: space.xl },
+  exitNote: { paddingTop: space.xs },
 });

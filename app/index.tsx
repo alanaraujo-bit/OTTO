@@ -14,6 +14,9 @@ import { useLock } from '@/lib/auth/lock';
  * Nothing is decided until the probe has answered. Rendering a redirect from an unread preference
  * would send the owner to the ledger for a frame and then yank it back — or, worse, quietly skip a
  * lock they had switched on.
+ *
+ * Every other way in — a deep link, a notification tap — never visits this route; `LockGate` in the
+ * root layout applies the same decision there.
  */
 export default function Index() {
   const session = useSession((s) => s.session);

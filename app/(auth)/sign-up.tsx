@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Screen } from '@/ui/Screen';
 import { BackBar } from '@/ui/BackBar';
 import { Reveal } from '@/ui/Reveal';
@@ -15,6 +15,7 @@ import { useFocusSignal } from '@/ui/FocusSignal';
 import { Txt } from '@/theme/text';
 import { space } from '@/theme/tokens';
 import { localAuth, AuthError } from '@/lib/auth/provider';
+import { appleConfigured, googleConfigured } from '@/lib/auth/config';
 
 /**
  * The arrival.
@@ -48,6 +49,14 @@ export default function SignUp() {
 
 function SignUpBody() {
   const snack = useSnackbar();
+  /*
+   * Where the owner was going before an account was needed — a shared debt they tapped "adicionar"
+   * on. Sign-in already honoured it; arriving here from sign-in's "Criar conta" used to drop it, so
+   * a new account landed on an empty Home and the debt that brought them was gone (DIV-07). Only a
+   * debt link is accepted, the same rule sign-in applies.
+   */
+  const { next } = useLocalSearchParams<{ next?: string }>();
+  const destination = typeof next === 'string' && next.startsWith('/divida/') ? next : '/home';
   const { look } = useFocusSignal();
 
   /** Back is a look to the left, forward a look to the right. The mark leads the transition. */
@@ -89,13 +98,13 @@ function SignUpBody() {
     try {
       const session = await localAuth.register(name, email, password);
       await signIn(session);
-      router.replace('/home');
+      router.replace(destination as never);
     } catch (e) {
       snack(e instanceof AuthError ? e.message : 'Não deu para criar sua conta agora.', 'error');
     } finally {
       setBusy(null);
     }
-  }, [name, email, password, signIn, snack]);
+  }, [name, email, password, signIn, snack, destination]);
 
   const social = useCallback(
     async (which: 'google' | 'apple') => {
@@ -104,14 +113,14 @@ function SignUpBody() {
         const session =
           which === 'google' ? await localAuth.withGoogle() : await localAuth.withApple();
         await signIn(session);
-        router.replace('/home');
+        router.replace(destination as never);
       } catch (e) {
         snack(e instanceof AuthError ? e.message : 'Não deu para entrar agora.', 'error');
       } finally {
         setBusy(null);
       }
     },
-    [signIn, snack],
+    [signIn, snack, destination],
   );
 
   return (
@@ -133,10 +142,10 @@ function SignUpBody() {
       <View style={styles.block}>
         <Reveal index={1} {...ENTER} style={styles.head}>
           <Txt variant="title" f="sansSemibold">
-            Vamos começar.
+            Crie sua conta.
           </Txt>
           <Txt variant="body" t="muted" style={styles.sub}>
-            Leva menos de um minuto. Seus dados ficam no seu aparelho.
+            Leva menos de um minuto. Seu razão fica guardado na sua conta, no servidor do OTTO.
           </Txt>
         </Reveal>
 
@@ -216,17 +225,22 @@ function SignUpBody() {
           />
         </Reveal>
 
+        {/*
+          This used to say the owner agreed to "Termos de Uso" and a "Política de Privacidade" —
+          documents that do not exist anywhere to be linked (AUTH-06). Consent to an unreadable text
+          is not consent, so the line now states the privacy fact itself, which is true and short.
+        */}
         <Reveal index={6} {...ENTER}>
           <Txt variant="micro" t="faint" style={styles.terms}>
-            Ao criar sua conta você concorda com os Termos de Uso e com a Política de Privacidade
-            do OTTO.
+            Seu razão é privado: só você vê. Uma dívida só é compartilhada quando você mesmo cria o
+            link, e o link pode ser revogado.
           </Txt>
         </Reveal>
 
         <Reveal index={7} {...ENTER} style={styles.social}>
           <SocialRow
-            onGoogle={() => void social('google')}
-            onApple={() => void social('apple')}
+            onGoogle={googleConfigured() ? () => void social('google') : undefined}
+            onApple={appleConfigured() ? () => void social('apple') : undefined}
             busy={busy !== null}
           />
         </Reveal>
@@ -238,7 +252,7 @@ function SignUpBody() {
         </Txt>
         <Pressable
           onPress={back}
-          hitSlop={12}
+          hitSlop={15}
           accessibilityRole="button"
         >
           <Txt variant="label" f="sansSemibold" t="ink">

@@ -13,7 +13,7 @@ export interface AuthProvider {
   register(name: string, email: string, password: string): Promise<Session>;
   withGoogle(): Promise<Session>;
   withApple(): Promise<Session>;
-  requestPasswordReset(email: string): Promise<void>;
+  // No password reset: the API has no route for it, and `app/(auth)/forgot.tsx` says so instead.
 }
 
 function session(value: Session): Session {
@@ -38,9 +38,14 @@ export const localAuth: AuthProvider = {
     }
   },
 
+  /*
+   * Neither social flow is wired yet, and `SocialRow` is not drawn for a provider whose `…Configured`
+   * helper says no — so these throws are reachable only by a build that fills in a client ID without
+   * also writing the flow here. Filling one in is therefore not enough on its own: the throw below
+   * the check is the second half of the job.
+   */
   async withGoogle() {
     if (!googleConfigured()) {
-      // Deliberate: the button is real, the backend is not wired yet. Fail loudly, not silently.
       throw new AuthError('Login com Google ainda não está configurado neste build.');
     }
     throw new AuthError('Fluxo Google indisponível.');
@@ -51,9 +56,5 @@ export const localAuth: AuthProvider = {
       throw new AuthError('Entrar com Apple só funciona em iPhone e iPad.');
     }
     throw new AuthError('Fluxo Apple indisponível.');
-  },
-
-  async requestPasswordReset(_email) {
-    throw new AuthError('Recuperação de senha ainda não está habilitada.');
   },
 };
