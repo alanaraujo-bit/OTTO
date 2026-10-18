@@ -34,6 +34,12 @@ export interface FieldProps extends Omit<TextInputProps, 'style'> {
    * field showing a figure asks for mono this way instead of reaching around the restriction.
    */
   numeric?: boolean;
+  /**
+   * A unit set before the value and never part of it — "R$" on a money field. It sits outside the
+   * TextInput, so it cannot be selected, deleted or parsed as something the owner typed, and it
+   * stays on screen while the field is being edited, which is when it is needed most.
+   */
+  prefix?: string;
 }
 
 /**
@@ -44,7 +50,7 @@ export interface FieldProps extends Omit<TextInputProps, 'style'> {
  * `negative` with a short lateral nudge when the value is rejected.
  */
 export const Field = forwardRef<TextInput, FieldProps>(function Field(
-  { label, error, trailing, index = 0, numeric, onFocus, onBlur, ...rest },
+  { label, error, trailing, index = 0, numeric, prefix, onFocus, onBlur, ...rest },
   ref,
 ) {
   const reduced = useReducedMotion();
@@ -150,9 +156,24 @@ export const Field = forwardRef<TextInput, FieldProps>(function Field(
       </Animated.View>
 
       <View style={styles.row}>
+        {prefix ? (
+          <Txt
+            variant="body"
+            f="mono"
+            t="faint"
+            style={styles.prefix}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          >
+            {prefix}
+          </Txt>
+        ) : null}
         <TextInput
           ref={ref}
           {...rest}
+          // The visible label is a sibling Text, which TalkBack does not associate with the input;
+          // without this every field announced itself as an unnamed "caixa de edição".
+          accessibilityLabel={rest.accessibilityLabel ?? (prefix ? `${label}, em reais` : label)}
           onFocus={handleFocus}
           onBlur={handleBlur}
           style={numeric ? styles.inputNumeric : styles.input}
@@ -220,6 +241,7 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     ...(Platform.OS === 'web' ? { outlineWidth: 0 } : null),
   },
+  prefix: { paddingRight: space.sm },
   trailing: { minHeight: HIT, justifyContent: 'center', paddingLeft: space.md },
   // The rule is drawn from its left edge, the way a line is ruled across a page.
   rule: { width: '100%', borderRadius: 1, transformOrigin: 'left' },

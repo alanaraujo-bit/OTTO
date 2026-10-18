@@ -25,9 +25,9 @@ const ACTION_W = 76;
  * the time, is exactly the kind of furniture the balance curve's own "sem lista de contas a vencer"
  * argument was written against.
  *
- * Excluir fires the instant it is tapped, with no arm/disarm on top of it. The swipe and the tap are
- * already two deliberate gestures — the discipline most swipe-to-delete lists in mobile software
- * settle on — and a third "toque de novo" here would be that pattern doing the same job twice.
+ * The row itself does not decide whether an action needs confirming — a caller that wants two taps
+ * passes `keepOpen` and re-labels the action. The razão does exactly that for "excluir": a deleted
+ * lançamento cannot be undone, so the first tap arms it and the second commits, the same as lançar.
  *
  * **The actions are a parameter, because not every row has the same two.** A recorded entry can be
  * edited and deleted; a forecast can only be brought forward, since there is no row behind it to

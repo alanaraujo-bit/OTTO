@@ -11,11 +11,12 @@ import { Button } from '@/ui/Button';
 import { Field } from '@/ui/Field';
 import { MoneyField } from '@/ui/MoneyField';
 import { Amount } from '@/ui/Amount';
+import { FlowAmount } from '@/ui/FlowAmount';
 import { KeyboardAwareScrollView } from '@/ui/KeyboardAwareScrollView';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
 import { useSnackbar } from '@/ui/Snackbar';
-import { confirmDestructiveAction } from '@/lib/auth/lock';
+import { confirmDestructiveAction, useLock } from '@/lib/auth/lock';
 import { useLedger } from '@/state/ledger';
 import { deleteAccount, insertAccount, updateAccount } from '@/db/repo';
 import { balanceToday, dayKey, parseDay } from '@/domain/projection';
@@ -27,6 +28,7 @@ import {
   type Statement,
 } from '@/domain/card';
 import { brl, brlShort } from '@/domain/money';
+import { openingFor } from '@/assistant/balance';
 import type { Account, Entry } from '@/domain/model';
 
 /*
@@ -61,7 +63,7 @@ const ENTER = { delay: 160, step: 70, cap: 5, rise: 10, shift: 26 } as const;
  * into the rest of what this app can track.
  *
  * Every row here is now as editable as it was creatable — tapping one opens the same form that made
- * it. Apagar carries more ceremony than most destructive rows in this app: an account's entries
+ * it. Excluir carries more ceremony than most destructive rows in this app: an account's entries
  * cascade with it (`ON DELETE CASCADE`, unlike a series' softer `SET NULL`), so the confirmation
  * names how many lançamentos are about to go, and the one holding account left refuses outright —
  * there has to be somewhere for `lançar` to book to.
@@ -82,19 +84,51 @@ function ContasBody() {
   const accounts = useLedger((s) => s.accounts);
   const entries = useLedger((s) => s.entries);
 
-  const [editing, setEditing] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
+  const probe = useLock((s) => s.probe);
+
+  /*
+   * One form open at a time (CONTA-04). Editing a row while "nova conta" was open left two forms on
+   * screen, each with its own Salvar, and nothing saying which one the keyboard was typing into.
+   */
+  const setEditing = (next: string | null | ((prev: string | null) => string | null)) => {
+    setEditingId(next);
+    setCreatingNew(false);
+  };
+  const editing = editingId;
+  const startCreating = () => {
+    setEditingId(null);
+    setCreatingNew(true);
+  };
 
   const removeWithBiometry = async (account: Account) => {
+    /*
+     * The protection is not negotiable — an account takes its lançamentos with it — but its
+     * absence must not be reported as the owner's failure. With no biometry enrolled the prompt
+     * never appears, and "a biometria não foi confirmada" blamed them for a sensor that was never
+     * asked. So the device is read first, and that case says what to do instead (AJ-04).
+     */
+    await probe();
+    const bio = useLock.getState().biometry;
+    if (bio && (!bio.hardware || !bio.enrolled)) {
+      snack(
+        bio.hardware
+          ? 'Excluir pede confirmação por biometria, e não há nenhuma cadastrada neste aparelho. Cadastre uma nas configurações do Android e tente de novo.'
+          : 'Excluir pede confirmação por biometria, e este aparelho não tem sensor.',
+        'error',
+      );
+      return;
+    }
     const confirmed = await confirmDestructiveAction(`Confirme para excluir ${account.name}`);
     if (!confirmed) {
-      snack('Exclusão cancelada: a biometria não foi confirmada.', 'error');
+      snack('Nada foi excluído: a biometria não confirmou.', 'error');
       return;
     }
     await deleteAccount(account.id);
     await load();
     setEditing(null);
-    snack(account.kind === 'card' ? 'Cartão apagado.' : 'Conta apagada.', 'info');
+    snack(account.kind === 'card' ? 'Cartão excluído.' : 'Conta excluída.', 'info');
   };
 
   useEffect(() => {
@@ -143,7 +177,7 @@ function ContasBody() {
         {error ? (
           <Reveal index={0} {...ENTER}>
             <Txt variant="heading" f="sansSemibold" style={styles.head}>
-              Não consegui ler seus dados.
+              Não foi possível ler seus dados.
             </Txt>
             <Txt variant="body" t="muted" style={styles.notice}>
               {error}
@@ -188,6 +222,7 @@ function ContasBody() {
                   {editing === h.account.id ? (
                     <AccountForm
                       initial={h.account}
+                      balanceCents={h.cents}
                       entryCount={entries.filter((e) => e.accountId === h.account.id).length}
                       blockDelete={view.holding.length <= 1}
                       onSave={async (a) => {
@@ -196,6 +231,7 @@ function ContasBody() {
                         setEditing(null);
                         snack('Conta salva.', 'info');
                       }}
+                      onCancel={() => setEditing(null)}
                       onDelete={async () => {
                         await removeWithBiometry(h.account);
                       }}
@@ -274,7 +310,7 @@ function ContasBody() {
                 </View>
               ) : (
                 <Press
-                  onPress={() => setCreatingNew(true)}
+                  onPress={startCreating}
                   style={styles.row}
                   accessibilityLabel="Nova conta ou cartão"
                 >
@@ -305,9 +341,18 @@ function ContasBody() {
  * limite — is exactly as editable after the fact as it was on the way in. A control that only takes
  * a value once is a control that punishes a typo forever, which is the complaint this whole pass
  * exists to answer.
+ *
+ * **Editing asks for today's balance, not the opening one.** The row above the form shows
+ * `balanceToday`, so a field labelled "Saldo" holding `openingCents` showed a different number from
+ * the one the owner just tapped — and "correcting" it to the row's figure moved the balance by every
+ * lançamento already booked. The field now holds the figure on the row, and saving solves for the
+ * opening that makes it true (`openingFor`, the same rule Otto's `definir_saldo` uses). An untouched
+ * or emptied field changes nothing: the field cannot show a negative figure, so an overdrawn account
+ * opens it blank, and blank must not quietly mean "set it to zero".
  */
 function AccountForm({
   initial,
+  balanceCents,
   entryCount,
   blockDelete,
   onSave,
@@ -315,6 +360,8 @@ function AccountForm({
   onCancel,
 }: {
   initial: Account | null;
+  /** Today's balance of a holding account being edited — what the "Saldo hoje" field starts on. */
+  balanceCents?: number;
   /** How many lançamentos are booked here — said in the delete warning, not just implied. */
   entryCount: number;
   /** True for the one holding account left; deleting it would leave nowhere for `lançar` to book. */
@@ -325,7 +372,11 @@ function AccountForm({
 }) {
   const [kind, setKind] = useState<Account['kind']>(initial?.kind ?? 'checking');
   const [name, setName] = useState(initial?.name ?? '');
-  const [opening, setOpening] = useState<number | null>(initial?.openingCents ?? null);
+  // Creation types the opening figure; editing types today's balance — see the doc comment.
+  const editingBalance = initial !== null && balanceCents !== undefined;
+  const [opening, setOpening] = useState<number | null>(
+    editingBalance ? balanceCents : (initial?.openingCents ?? null),
+  );
   const [closing, setClosing] = useState(initial?.closingDay?.toString() ?? '');
   const [due, setDue] = useState(initial?.dueDay?.toString() ?? '');
   const [limit, setLimit] = useState<number | null>(initial?.limitCents ?? null);
@@ -375,6 +426,7 @@ function AccountForm({
           <View style={styles.gap} />
           <Field
             label="Dia do fechamento"
+            numeric
             value={closing}
             onChangeText={(t) => setClosing(t.replace(/\D/g, '').slice(0, 2))}
             keyboardType="number-pad"
@@ -383,6 +435,7 @@ function AccountForm({
           <View style={styles.gap} />
           <Field
             label="Dia do vencimento"
+            numeric
             value={due}
             onChangeText={(t) => setDue(t.replace(/\D/g, '').slice(0, 2))}
             keyboardType="number-pad"
@@ -395,15 +448,17 @@ function AccountForm({
         <>
           <View style={styles.gap} />
           <MoneyField
-            label={initial ? 'Saldo' : 'Saldo inicial (opcional)'}
+            label={editingBalance ? 'Saldo hoje' : 'Saldo inicial (opcional)'}
             cents={opening}
             onChangeCents={setOpening}
           />
-          {!initial ? (
-            <Txt variant="micro" t="faint" style={styles.hint}>
-              O que você já tem hoje nessa conta. Pode deixar em branco e lançar depois.
-            </Txt>
-          ) : null}
+          <Txt variant="micro" t="faint" style={styles.hint}>
+            {!editingBalance
+              ? 'O que você já tem hoje nessa conta. Pode deixar em branco e lançar depois.'
+              : balanceCents < 0
+                ? `Hoje esta conta está em ${brl(balanceCents)}. Digite o saldo certo só se quiser corrigir.`
+                : 'O mesmo valor da linha acima. Corrigir aqui ajusta o saldo sem criar lançamento.'}
+          </Txt>
         </>
       )}
 
@@ -419,7 +474,14 @@ function AccountForm({
             id: initial?.id ?? Crypto.randomUUID(),
             name: name.trim(),
             kind,
-            openingCents: kind === 'card' ? 0 : (opening ?? 0),
+            openingCents:
+              kind === 'card'
+                ? 0
+                : editingBalance
+                  ? opening === null
+                    ? initial.openingCents
+                    : openingFor(initial, balanceCents, opening)
+                  : (opening ?? 0),
             closingDay: kind === 'card' ? closingDay : null,
             dueDay: kind === 'card' ? dueDay : null,
             limitCents: kind === 'card' ? limit : null,
@@ -438,8 +500,8 @@ function AccountForm({
       {initial && onDelete ? (
         blockDelete ? (
           <Txt variant="micro" t="faint" style={styles.remove}>
-            Esta é a única conta que segura dinheiro — não dá para apagá-la sem deixar o razão sem
-            onde lançar. Crie outra antes de remover esta.
+            Esta é a única conta que guarda dinheiro — excluí-la deixaria o razão sem onde lançar.
+            Crie outra antes de excluir esta.
           </Txt>
         ) : (
           <Press
@@ -454,21 +516,22 @@ function AccountForm({
             }}
             disabled={saving}
             style={styles.remove}
-            accessibilityLabel={kind === 'card' ? 'Apagar cartão' : 'Apagar conta'}
+            accessibilityLabel={
+              armed ? 'Toque de novo para excluir' : kind === 'card' ? 'Excluir cartão' : 'Excluir conta'
+            }
           >
             <Txt variant="label" t={armed ? 'negative' : 'faint'} center>
               {armed
-                ? 'Toque de novo para apagar'
+                ? 'Toque de novo para excluir'
                 : kind === 'card'
-                  ? 'Apagar cartão'
-                  : 'Apagar conta'}
+                  ? 'Excluir cartão'
+                  : 'Excluir conta'}
             </Txt>
-            {entryCount > 0 ? (
-              <Txt variant="micro" t="faint" center style={styles.removeNote}>
-                Isso apaga {entryCount} {entryCount === 1 ? 'lançamento' : 'lançamentos'} junto — não
-                dá para desfazer.
-              </Txt>
-            ) : null}
+            <Txt variant="micro" t="faint" center style={styles.removeNote}>
+              {entryCount > 0
+                ? `Isso exclui ${entryCount} ${entryCount === 1 ? 'lançamento' : 'lançamentos'} junto — não dá para desfazer. Pede sua biometria.`
+                : 'Pede sua biometria para confirmar.'}
+            </Txt>
           </Press>
         )
       ) : null}
@@ -522,12 +585,29 @@ function Card({
               : 'sem ciclo configurado'}
           </Txt>
         </View>
-        <Txt variant="micro" t="muted">
-          {editing ? 'fechar' : 'editar'}
-        </Txt>
+        {/* Only when closed: an open form has its own Cancelar, and "fechar" beside "fecha 4 nov"
+            read as the statement closing (CONTA-04). */}
+        {!editing ? (
+          <Txt variant="micro" t="muted">
+            editar
+          </Txt>
+        ) : null}
       </Press>
 
-      {cycle ? (
+      {/* Right under the row that opened it, so it opens on screen rather than below the
+          statement. The cycle and the purchases step aside while it is open. */}
+      {editing ? (
+        <AccountForm
+          initial={account}
+          entryCount={entryCount}
+          blockDelete={false}
+          onSave={onSave}
+          onDelete={onDelete}
+          onCancel={onEdit}
+        />
+      ) : null}
+
+      {cycle && !editing ? (
         <>
           <CycleRule cycle={cycle} today={today} />
 
@@ -539,10 +619,21 @@ function Card({
               <Amount cents={used} size="heading" tone={used > 0 ? 'ink' : 'faint'} />
             </View>
             <View style={styles.cardLimit}>
+              {/* "do limite": "96% de R$ 245" did not say what the 245 was (CONTA-03). */}
               <Txt variant="micro" t="faint">
-                {account.limitCents == null
-                  ? 'sem limite informado'
-                  : `${Math.max(0, Math.round((use ?? 0) * 100))}% de ${brlShort(account.limitCents)}`}
+                {account.limitCents == null ? (
+                  'sem limite informado'
+                ) : (
+                  <>
+                    <Txt variant="micro" f="mono" t="faint" tabular>
+                      {`${Math.max(0, Math.round((use ?? 0) * 100))}%`}
+                    </Txt>
+                    {' do limite de '}
+                    <Txt variant="micro" f="mono" t="faint" tabular>
+                      {brlShort(account.limitCents)}
+                    </Txt>
+                  </>
+                )}
               </Txt>
               {use !== null ? (
                 <View style={styles.limitTrack}>
@@ -571,9 +662,10 @@ function Card({
               home screen's curve makes — a shape without names — and this is the other half of it,
               at the scale of one card.
 
-              A credit is set positive and in the money's own colour, because a refund really is the
-              opposite of a charge here: it is the one place in this app where an inflow reduces
-              something the owner owes rather than adding to what they hold.
+              Read the way the razão reads the same rows — a purchase in `negative` with no sign, a
+              refund with "+" in `positive` (CONTA-05) — because a refund really is the opposite of a
+              charge here: the one place in this app where an inflow reduces something the owner
+              owes rather than adding to what they hold.
             */
             <View style={styles.statement}>
               {items.slice(0, 8).map((e) => (
@@ -587,11 +679,7 @@ function Card({
                       {e.direction === 'in' ? ' · estorno' : ''}
                     </Txt>
                   </View>
-                  <Amount
-                    cents={e.direction === 'out' ? -e.amountCents : e.amountCents}
-                    size="body"
-                    tone={e.direction === 'out' ? 'ink' : 'positive'}
-                  />
+                  <FlowAmount cents={e.amountCents} direction={e.direction} />
                 </View>
               ))}
               {items.length > 8 ? (
@@ -602,16 +690,6 @@ function Card({
             </View>
           )}
         </>
-      ) : null}
-
-      {editing ? (
-        <AccountForm
-          initial={account}
-          entryCount={entryCount}
-          blockDelete={false}
-          onSave={onSave}
-          onDelete={onDelete}
-        />
       ) : null}
     </View>
   );
@@ -627,6 +705,8 @@ function Card({
  * Two marks on it, because there are exactly two dates a card has: it closes, and it falls due.
  */
 function CycleRule({ cycle, today }: { cycle: Statement; today: string }) {
+  // The track's measured width, so the close label can be placed on its tick in dp (CONTA-02).
+  const [width, setWidth] = useState(0);
   const start = parseDay(cycle.from).getTime();
   const end = parseDay(cycle.due).getTime();
   const span = Math.max(1, end - start);
@@ -635,9 +715,27 @@ function CycleRule({ cycle, today }: { cycle: Statement; today: string }) {
   const now = at(today);
   const closes = at(cycle.closes);
 
+  /*
+   * The close is labelled above the line, on its tick; the two ends below it. A centred middle
+   * label sat wherever the space between the ends happened to be, nowhere near the mark it named,
+   * and the close is usually far enough right that sharing a row with "vence" made them collide.
+   * Clamped so a close near either end keeps its label on the panel.
+   */
+  const closeLeft = Math.min(Math.max(0, closes * width - CLOSE_W / 2), Math.max(0, width - CLOSE_W));
+
   return (
     <View style={styles.cycle}>
-      <View style={styles.cycleTrack}>
+      <View style={styles.cycleCloseRow}>
+        <Txt
+          variant="micro"
+          t={cycle.closed ? 'faint' : 'muted'}
+          style={[styles.cycleCloseLabel, { left: closeLeft }]}
+          numberOfLines={1}
+        >
+          fecha {format(parseDay(cycle.closes), 'd MMM', { locale: ptBR })}
+        </Txt>
+      </View>
+      <View style={styles.cycleTrack} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
         <View style={[styles.cycleDone, { width: `${now * 100}%` }]} />
         {/* The close, marked on the line it divides. */}
         <View style={[styles.cycleMark, { left: `${closes * 100}%` }]} />
@@ -646,9 +744,6 @@ function CycleRule({ cycle, today }: { cycle: Statement; today: string }) {
         <Txt variant="micro" t="faint">
           {format(parseDay(cycle.from), 'd MMM', { locale: ptBR })}
         </Txt>
-        <Txt variant="micro" t={cycle.closed ? 'faint' : 'muted'}>
-          fecha {format(parseDay(cycle.closes), 'd MMM', { locale: ptBR })}
-        </Txt>
         <Txt variant="micro" t={cycle.closed ? 'muted' : 'faint'}>
           vence {format(parseDay(cycle.due), 'd MMM', { locale: ptBR })}
         </Txt>
@@ -656,6 +751,9 @@ function CycleRule({ cycle, today }: { cycle: Statement; today: string }) {
     </View>
   );
 }
+
+/** Width reserved for "fecha 14 nov" — wide enough for the longest month abbreviation. */
+const CLOSE_W = 96;
 
 /** 1–31, or null. The same range the schema and the projection engine both enforce. */
 function day(raw: string): number | null {
@@ -739,7 +837,9 @@ const styles = StyleSheet.create({
   limitFill: { height: 2, borderRadius: 1, backgroundColor: color.inkMuted },
   limitOver: { backgroundColor: color.negative },
 
-  cycle: { paddingTop: space.md },
+  cycle: { paddingTop: space.sm },
+  cycleCloseRow: { height: 18, marginBottom: space.xs },
+  cycleCloseLabel: { position: 'absolute', width: CLOSE_W, textAlign: 'center' },
   cycleTrack: {
     height: 2,
     borderRadius: 1,

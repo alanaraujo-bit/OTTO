@@ -20,113 +20,10 @@ import { Amount } from '@/ui/Amount';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
 import { useLedger } from '@/state/ledger';
-import { dayKey, parseDay, project } from '@/domain/projection';
-import { keyOf, settled } from '@/domain/settlement';
-import { signed, type Direction, type SeriesKind } from '@/domain/model';
-import { brlShort } from '@/domain/money';
-
-type DayState = 'settled' | 'forecast' | 'pending';
-
-type CalendarItem = {
-  key: string;
-  title: string;
-  category: string;
-  amountCents: number;
-  direction: Direction;
-  state: DayState;
-  kind: SeriesKind | 'entry';
-  installment: { n: number; of: number } | null;
-  /** The hour the owner gave this lançamento. Null on every projection — nothing has an hour until
-      it has happened. */
-  time: string | null;
-};
-
-type CalendarDay = {
-  date: string;
-  items: CalendarItem[];
-  moved: number;
-  pending: boolean;
-};
-
-/** A month is a map before it is a grid: every day has one truthful, named reading. */
-function calendarDays(
-  entries: ReturnType<typeof useLedger.getState>['entries'],
-  series: ReturnType<typeof useLedger.getState>['series'],
-  from: string,
-  to: string,
-  today: string,
-  deferrals: ReturnType<typeof useLedger.getState>['deferralsBySlot'],
-) {
-  const byDate = new Map<string, CalendarItem[]>();
-  const put = (date: string, item: CalendarItem) => {
-    const existing = byDate.get(date);
-    if (existing) existing.push(item);
-    else byDate.set(date, [item]);
-  };
-
-  const done = settled(entries);
-
-  for (const entry of entries) {
-    if (entry.date < from || entry.date > to) continue;
-    const rule = entry.seriesId ? series.find((item) => item.id === entry.seriesId) : null;
-    put(entry.date, {
-      key: entry.id,
-      title: entry.title,
-      category: entry.category,
-      amountCents: entry.amountCents,
-      direction: entry.direction,
-      state: 'settled',
-      kind: rule?.kind ?? 'entry',
-      installment: null,
-      time: entry.time,
-    });
-  }
-
-  // `project` already drops anything an entry has settled, by the same key every other screen
-  // uses. The check that used to live here compared `entry.date` to `occurrence.date`, which was
-  // right only while nothing was ever paid early — and paying early is now a thing the app does.
-  for (const occurrence of project(series, from, to, done, deferrals)) {
-    /*
-     * A projection is never claimed as fact, but a day that has passed with nothing settling it is
-     * not a forecast either — it is still owed, and that is the state this calendar exists to make
-     * visible.
-     *
-     * This used to admit only debts and silently drop every other kind, so a rent that went unpaid
-     * left no mark anywhere. Every kind is admitted now, inflows included: a salary that did not
-     * arrive is not a debt, but it is a promise the month is still counting on.
-     *
-     * The dashboard's overdue feed stops at the start of the current month, deliberately — see
-     * `overdue`. This does not, and the difference is not an inconsistency: that feed is a list of
-     * things to act on now, while this is a month the owner navigated to on purpose. Its window is
-     * the month on screen, so "what was still open in July" stays answerable without any list
-     * growing without bound.
-     */
-    put(occurrence.on, {
-      key: keyOf(occurrence),
-      title: occurrence.title,
-      category: occurrence.category,
-      amountCents: occurrence.amountCents,
-      direction: occurrence.direction,
-      state: occurrence.on <= today ? 'pending' : 'forecast',
-      kind: occurrence.kind,
-      installment: occurrence.installment,
-      time: null,
-    });
-  }
-
-  const out = new Map<string, CalendarDay>();
-  for (let cursor = parseDay(from); cursor <= parseDay(to); cursor = addDays(cursor, 1)) {
-    const date = dayKey(cursor);
-    const items = (byDate.get(date) ?? []).sort((a, b) => b.amountCents - a.amountCents);
-    out.set(date, {
-      date,
-      items,
-      moved: items.reduce((sum, item) => sum + signed(item.amountCents, item.direction), 0),
-      pending: items.some((item) => item.state === 'pending'),
-    });
-  }
-  return out;
-}
+import { dayKey, parseDay } from '@/domain/projection';
+import { calendarDays, type CalendarDay, type CalendarItem } from '@/domain/calendar';
+import { withStatements } from '@/domain/card';
+import { forecastRoute } from '@/lib/nav';
 
 export default function Calendario() {
   return (
@@ -141,6 +38,7 @@ function CalendarioBody() {
   const ready = useLedger((state) => state.ready);
   const error = useLedger((state) => state.error);
   const load = useLedger((state) => state.load);
+  const accounts = useLedger((state) => state.accounts);
   const entries = useLedger((state) => state.entries);
   const series = useLedger((state) => state.series);
   const deferrals = useLedger((state) => state.deferralsBySlot);
@@ -172,13 +70,13 @@ function CalendarioBody() {
     const from = dayKey(monthStart);
     const to = dayKey(endOfMonth(monthStart));
     const era: 'past' | 'current' | 'future' = to < today ? 'past' : from > today ? 'future' : 'current';
-    const days = calendarDays(entries, series, from, to, today, deferrals);
+    const days = calendarDays(entries, withStatements(accounts, entries, series, today), from, to, today, deferrals);
     const first = startOfWeek(monthStart, { weekStartsOn: 1 });
     const last = endOfWeek(endOfMonth(monthStart), { weekStartsOn: 1 });
     const cells: string[] = [];
     for (let cursor = first; cursor <= last; cursor = addDays(cursor, 1)) cells.push(dayKey(cursor));
     return { from, to, era, days, cells };
-  }, [anchor, entries, series, deferrals, today]);
+  }, [anchor, accounts, entries, series, deferrals, today]);
 
   const selectedDay = month.days.get(selected) ?? null;
 
@@ -199,7 +97,7 @@ function CalendarioBody() {
             Calendário financeiro
           </Txt>
           <Txt variant="body" t="muted" style={styles.intro}>
-            O que aconteceu, o que vem e o que ficou pendente.
+            O que aconteceu, o que vem e o que ficou em atraso.
           </Txt>
         </View>
 
@@ -242,13 +140,7 @@ function CalendarioBody() {
                 const day = month.days.get(date);
                 const current = date === selected;
                 const isToday = date === today;
-                const tone = day?.pending
-                  ? color.warning
-                  : (day?.moved ?? 0) < 0
-                    ? color.negative
-                    : (day?.moved ?? 0) > 0
-                      ? color.positive
-                      : color.hairline;
+                const marks = day ? dayMarks(day) : [];
                 return (
                   <Press
                     key={date}
@@ -259,35 +151,60 @@ function CalendarioBody() {
                     dim={0.7}
                     outerStyle={styles.dayHit}
                     style={[styles.day, current ? styles.daySelected : null, !inside ? styles.dayOutside : null]}
-                    accessibilityLabel={`${format(parseDay(date), "d 'de' MMMM", { locale: ptBR })}${day?.items.length ? `, ${day.items.length} ${day.items.length === 1 ? 'item' : 'itens'}` : ', sem movimentações'}`}
+                    accessibilityLabel={`${format(parseDay(date), "d 'de' MMMM", { locale: ptBR })}${day?.items.length ? `, ${day.items.length} ${day.items.length === 1 ? 'item' : 'itens'}${day.pending ? ', com vencido ou não recebido' : ''}` : ', sem movimentações'}`}
                     accessibilityState={{ selected: current, disabled: !inside }}
                   >
                     <Txt variant="label" f={isToday || current ? 'monoMedium' : 'mono'} t={inside ? 'ink' : 'faint'} tabular>
                       {format(parseDay(date), 'd')}
                     </Txt>
-                    <View style={[styles.dayMark, { backgroundColor: tone, opacity: day?.items.length ? 1 : 0.45 }]} />
+                    {/*
+                      One mark per kind of movement, not one per day. A single bar coloured by the
+                      day's net hid a salary and a bill landing together behind whichever was
+                      larger; and a forecast drawn at full strength claimed "entrou" for money that
+                      has not moved. Forecast marks are drawn faint, the way the razão draws a
+                      projected balance.
+                    */}
+                    <View style={styles.marks}>
+                      {marks.length === 0 ? (
+                        <View style={[styles.dayMark, styles.dayMarkQuiet]} />
+                      ) : (
+                        marks.map((m) => (
+                          <View
+                            key={m.kind}
+                            style={[styles.mark, { backgroundColor: m.tint, opacity: m.faint ? 0.4 : 1 }]}
+                          />
+                        ))
+                      )}
+                    </View>
                   </Press>
                 );
               })}
             </View>
 
             <View style={styles.legend}>
-              <Legend color={color.positive} label="entrou" />
-              <Legend color={color.negative} label="saiu" />
-              <Legend color={color.warning} label="pendente" />
+              <Legend color={color.positive} label="entrada" />
+              <Legend color={color.negative} label="saída" />
+              <Legend color={color.warning} label="vencido ou não recebido" />
+              <Legend color={color.inkMuted} label="previsto" faint />
             </View>
 
             <View style={styles.detail}>
               <View style={styles.detailRule} />
               <View style={styles.detailHead}>
-                <View>
+                {/* Shrinks before the figure does, so a long weekday never runs into the total. */}
+                <View style={styles.detailTitle}>
                   <Txt variant="micro" f="sansMedium" t="muted" style={styles.sectionLabel}>DIA SELECIONADO</Txt>
-                  <Txt variant="heading" f="sansSemibold" style={styles.detailDate}>
-                    {format(parseDay(selected), "EEEE, d 'de' MMMM", { locale: ptBR })}
+                  <Txt variant="heading" f="sansSemibold" numberOfLines={1} style={styles.detailDate}>
+                    {sentenceCase(format(parseDay(selected), "EEEE, d 'de' MMMM", { locale: ptBR }))}
                   </Txt>
                 </View>
                 {selectedDay && selectedDay.moved !== 0 ? (
-                  <Amount cents={selectedDay.moved} size="body" tone={selectedDay.moved < 0 ? 'negative' : 'positive'} />
+                  <Amount
+                    cents={selectedDay.moved}
+                    direction={selectedDay.moved < 0 ? 'out' : 'in'}
+                    size="body"
+                    tone={selectedDay.moved < 0 ? 'negative' : 'positive'}
+                  />
                 ) : null}
               </View>
 
@@ -310,36 +227,83 @@ function CalendarioBody() {
   );
 }
 
-function Legend({ color: tint, label }: { color: string; label: string }) {
+/**
+ * "Segunda-feira, 5 de outubro", not "Segunda-Feira, 5 De Outubro". `textTransform: capitalize`
+ * titlecased every word, which is English headline style; Portuguese capitalises the sentence.
+ */
+function sentenceCase(s: string): string {
+  return s.charAt(0).toLocaleUpperCase('pt-BR') + s.slice(1);
+}
+
+/** The marks under a day: one per kind present, in a fixed order so a day never reshuffles. */
+function dayMarks(day: CalendarDay): { kind: string; tint: string; faint: boolean }[] {
+  const out: { kind: string; tint: string; faint: boolean }[] = [];
+  for (const [kind, tint] of [
+    ['in', color.positive],
+    ['out', color.negative],
+  ] as const) {
+    const rows = day.items.filter((i) => i.direction === kind && i.state !== 'pending');
+    // Faint only when every row of this kind is still a forecast; one recorded row makes it fact.
+    if (rows.length) out.push({ kind, tint, faint: rows.every((i) => i.state === 'forecast') });
+  }
+  if (day.pending) out.push({ kind: 'late', tint: color.warning, faint: false });
+  return out;
+}
+
+function Legend({ color: tint, label, faint }: { color: string; label: string; faint?: boolean }) {
   return (
     <View style={styles.legendItem}>
-      <View style={[styles.legendRule, { backgroundColor: tint }]} />
+      <View style={[styles.legendRule, { backgroundColor: tint, opacity: faint ? 0.4 : 1 }]} />
       <Txt variant="micro" t="faint">{label}</Txt>
     </View>
   );
 }
 
+/**
+ * One row of the day, and the way into it — a recorded row opens the lançamento, a forecast or a
+ * late one opens the rule that produced it, the same doors the Home's rows use. A row with neither
+ * stays a readout rather than a control that does nothing.
+ */
 function DayItemRow({ item }: { item: CalendarItem }) {
+  // Late is named by direction, as everywhere else: a bill is "vencido", money that did not arrive
+  // is "não recebido". "Dívida pendente" called an unpaid rent a debt.
   const state = item.state === 'settled'
     ? 'lançado' + (item.time ? ' · ' + item.time : '')
     : item.state === 'pending'
-      ? 'dívida pendente'
+      ? item.direction === 'in'
+        ? 'não recebido'
+        : 'vencido'
       : item.kind === 'debt'
         ? 'dívida prevista'
         : item.kind === 'card'
-          ? 'cartão previsto'
+          ? 'fatura prevista'
           : 'recorrência prevista';
-  const detail = item.installment ? `${state} · ${item.installment.n}/${item.installment.of}` : state;
+  const detail = item.installment ? `${state} · parcela ${item.installment.n}/${item.installment.of}` : state;
   const tint = item.state === 'pending' ? 'warning' : item.direction === 'out' ? 'negative' : 'positive';
+  const to =
+    item.state === 'settled' && item.entryId
+      ? ({ pathname: '/lancar', params: { id: item.entryId } } as const)
+      : item.state !== 'settled' && item.seriesId && item.scheduled
+        ? forecastRoute(item.seriesId, item.scheduled)
+        : null;
 
-  return (
+  const body = (
     <View style={styles.item}>
       <View style={styles.itemCopy}>
-        <Txt variant="body" numberOfLines={1}>{item.title}</Txt>
-        <Txt variant="micro" t="faint" numberOfLines={1}>{item.category} · {detail}</Txt>
+        <Txt variant="body" t={item.state === 'settled' ? 'ink' : 'muted'} numberOfLines={1}>{item.title}</Txt>
+        <Txt variant="micro" t={item.state === 'pending' ? 'warning' : 'faint'} numberOfLines={1}>
+          {item.category} · {detail}
+        </Txt>
       </View>
-      <Amount cents={signed(item.amountCents, item.direction)} size="body" tone={tint} />
+      <Amount cents={item.amountCents} direction={item.direction} size="body" tone={tint} />
     </View>
+  );
+
+  if (!to) return body;
+  return (
+    <Press onPress={() => router.push(to)} accessibilityLabel={`Abrir ${item.title}`}>
+      {body}
+    </Press>
   );
 }
 
@@ -360,15 +324,19 @@ const styles = StyleSheet.create({
   day: { minHeight: 54, alignItems: 'center', justifyContent: 'center', marginVertical: 1 },
   daySelected: { backgroundColor: color.surface },
   dayOutside: { opacity: 0 },
-  dayMark: { width: 16, height: 2, borderRadius: 1, marginTop: space.xs },
-  legend: { flexDirection: 'row', gap: space.lg, paddingTop: space.md },
+  marks: { flexDirection: 'row', gap: 2, marginTop: space.xs, height: 2 },
+  mark: { width: 6, height: 2, borderRadius: 1 },
+  dayMark: { width: 16, height: 2, borderRadius: 1 },
+  dayMarkQuiet: { backgroundColor: color.hairline, opacity: 0.45 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: space.lg, rowGap: space.xs, paddingTop: space.md },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   legendRule: { width: 12, height: 2, borderRadius: 1 },
   detail: { paddingTop: space.xxl },
   detailRule: { height: StyleSheet.hairlineWidth, backgroundColor: color.hairline },
   detailHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: space.md },
   sectionLabel: { letterSpacing: 0.8 },
-  detailDate: { paddingTop: space.xs, textTransform: 'capitalize' },
+  detailTitle: { flexShrink: 1, paddingRight: space.lg },
+  detailDate: { paddingTop: space.xs },
   items: { paddingTop: space.sm },
   item: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space.sm },
   itemCopy: { flex: 1, paddingRight: space.lg },

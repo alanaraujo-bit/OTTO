@@ -123,3 +123,21 @@ export function NavSettings({ size = 22, tint = color.ink }: IconProps) {
     </Svg>
   );
 }
+
+/** Send, for the composer: the message goes up into the transcript. */
+export function ArrowUp({ size = 22, tint = color.ink }: IconProps) {
+  return (
+    <Svg {...base(size)}>
+      <Stroke d="M12 19V5m0 0-6 6m6-6 6 6" tint={tint} />
+    </Svg>
+  );
+}
+
+/** Otto: a speech mark on the same grid, one open stroke — a ledger line that talks back. */
+export function Ask({ size = 22, tint = color.ink }: IconProps) {
+  return (
+    <Svg {...base(size)}>
+      <Stroke d="M4.5 6.5A2.5 2.5 0 0 1 7 4h10a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 17 16h-6.5L6 19.5V16H7a2.5 2.5 0 0 1-2.5-2.5zM8.5 10h7" tint={tint} />
+    </Svg>
+  );
+}

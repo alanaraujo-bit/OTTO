@@ -4,7 +4,7 @@ import { addMonths, format, startOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { Txt } from '@/theme/text';
-import { color, space } from '@/theme/tokens';
+import { color, HIT, space } from '@/theme/tokens';
 import { dayKey, parseDay } from '@/domain/projection';
 import { ChevronLeft, ChevronRight } from './Icon';
 import { Press } from './Press';
@@ -76,17 +76,27 @@ export function MonthStepper({
           current ? `${label}, mês atual` : `${label}. Toque para voltar ao mês atual`
         }
       >
-        <Txt variant="label" f="monoMedium" t="ink" style={styles.month}>
+        {/*
+          One line each, always. At a larger font scale "mês encerrado · voltar para hoje" used to
+          wrap under itself and the band grew a row taller only in the months you had navigated to,
+          shoving the readout below it down. The month is written as words, so it is set in sans —
+          mono is for figures.
+        */}
+        <Txt variant="label" f="sansSemibold" t="ink" numberOfLines={1} style={styles.month}>
           {label.toUpperCase()}
         </Txt>
         <View style={styles.caption}>
-          <Txt variant="micro" t="faint">
+          <Txt variant="micro" t="faint" numberOfLines={1}>
             {eraLabel}
           </Txt>
           {/* The way home only appears when there is somewhere to come back from. */}
           {!current ? (
-            <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)}>
-              <Txt variant="micro" f="sansMedium" t="muted">
+            <Animated.View
+              entering={FadeIn.duration(180)}
+              exiting={FadeOut.duration(120)}
+              style={styles.home}
+            >
+              <Txt variant="micro" f="sansMedium" t="muted" numberOfLines={1}>
                 {'  ·  voltar para hoje'}
               </Txt>
             </Animated.View>
@@ -117,10 +127,11 @@ const styles = StyleSheet.create({
   /* Width and flex size the control among its siblings, so they belong on the target itself. On
      the inner view the chevrons collapsed to the glyph and the month label stopped claiming the
      middle, which pulled all three together into the centre of a band built to span the row. */
-  arrowHit: { width: 44 },
+  arrowHit: { width: HIT },
   arrow: { alignItems: 'center' },
   labelHit: { flex: 1 },
   label: { alignItems: 'center', paddingVertical: space.sm },
   month: { letterSpacing: 1.6 },
-  caption: { flexDirection: 'row', alignItems: 'center', paddingTop: 1 },
+  caption: { flexDirection: 'row', alignItems: 'center', paddingTop: 1, maxWidth: '100%' },
+  home: { flexShrink: 1 },
 });

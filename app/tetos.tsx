@@ -116,14 +116,20 @@ function Body() {
   return (
     <>
       <BackBar />
-      <KeyboardAwareScrollView contentContainerStyle={styles.scroll}>
+      {/* No scroll indicator: on the curved panel it sat over the right-hand column and cut
+          "definir" in half (TETO-03). Every other list in the app scrolls without one. */}
+      <KeyboardAwareScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         <Reveal index={0} {...ENTER}>
           <Txt variant="heading" f="sansSemibold">
             Tetos
           </Txt>
           <Txt variant="body" t="muted" style={styles.lede}>
             Quanto você aceita gastar num mês. OTTO fica calado enquanto o teto aguenta, e avisa
-            quando o ritmo não leva ele até o fim do mês.
+            quando, no ritmo atual, ele não chega ao fim do mês.
           </Txt>
         </Reveal>
 
@@ -185,6 +191,17 @@ function Row({
   onDraft: (cents: number | null) => void;
   onCommit: (cents: number) => void;
 }) {
+  // Removing arms first and stands down on its own — the same two taps lançar asks to excluir.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  useEffect(() => {
+    if (!open) setArmed(false);
+  }, [open]);
+
   /*
    * What the row says when it is closed.
    *
@@ -192,13 +209,20 @@ function Row({
    * Only the first two are coloured — a budget that is working is not news, and it should not
    * compete for attention with one that is not.
    */
-  const note = !reading
-    ? 'sem teto'
+  // Segments, so the figures can be set in mono and the words around them in sans. Over a ceiling
+  // is always "passou do teto" — the one phrase the app uses for it, here and in lançar.
+  const note: [string, boolean][] = !reading
+    ? [['sem teto', false]]
     : reading.leftCents <= 0
-      ? `${brlShort(-reading.leftCents)} acima do teto`
+      ? [['passou do teto em ', false], [brlShort(-reading.leftCents), true]]
       : reading.burstsOn
-        ? `no ritmo, estoura dia ${Number(reading.burstsOn.slice(8))}`
-        : `${brlShort(reading.perDayCents)} por dia nos ${reading.daysLeft} dias que faltam`;
+        ? [['no ritmo, passa do teto dia ', false], [String(Number(reading.burstsOn.slice(8))), true]]
+        : [
+            [brlShort(reading.perDayCents), true],
+            [' por dia nos ', false],
+            [String(reading.daysLeft), true],
+            [' dias que faltam', false],
+          ];
 
   const tone = !reading ? 'faint' : reading.leftCents <= 0 || reading.burstsOn ? 'negative' : 'muted';
 
@@ -211,14 +235,25 @@ function Row({
             {category}
           </Txt>
           <Txt variant="micro" t={tone} numberOfLines={1}>
-            {note}
+            {note.map(([text, figure], i) =>
+              figure ? (
+                <Txt key={i} variant="micro" f="mono" t={tone} tabular>
+                  {text}
+                </Txt>
+              ) : (
+                text
+              ),
+            )}
           </Txt>
         </View>
         {reading ? (
           <View style={styles.figures}>
             <Amount cents={reading.spent} size="body" tone="ink" />
-            <Txt variant="micro" t="faint" tabular>
-              {`de ${brlShort(reading.capCents)}`}
+            <Txt variant="micro" t="faint">
+              {'de '}
+              <Txt variant="micro" f="mono" t="faint" tabular>
+                {brlShort(reading.capCents)}
+              </Txt>
             </Txt>
           </View>
         ) : (
@@ -230,7 +265,14 @@ function Row({
 
       {open ? (
         <View style={styles.editor}>
-          <MoneyField label={`Teto mensal de ${category}`} cents={draft} onChangeCents={onDraft} />
+          {/* Typed the way lançar's keypad types: digits push in from the right, R$ stays on
+              screen (TETO-02). Focused on open — choosing "definir" already said what comes next. */}
+          <MoneyField
+            label={`Teto mensal de ${category}`}
+            cents={draft}
+            onChangeCents={onDraft}
+            autoFocus
+          />
           <View style={styles.actions}>
             <Button
               label="Salvar teto"
@@ -240,12 +282,20 @@ function Row({
             />
             {reading ? (
               <Press
-                onPress={() => onCommit(0)}
+                onPress={() => {
+                  if (!armed) {
+                    setArmed(true);
+                    return;
+                  }
+                  setArmed(false);
+                  onCommit(0);
+                }}
+                disabled={saving}
                 style={styles.remove}
-                accessibilityLabel="Remover teto"
+                accessibilityLabel={armed ? 'Toque de novo para remover' : 'Remover teto'}
               >
-                <Txt variant="label" t="faint" center>
-                  Remover teto
+                <Txt variant="label" t={armed ? 'negative' : 'faint'} center>
+                  {armed ? 'Toque de novo para remover' : 'Remover teto'}
                 </Txt>
               </Press>
             ) : null}

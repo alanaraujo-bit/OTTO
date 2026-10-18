@@ -20,8 +20,10 @@ import { setCap } from '@/db/repo';
 import { renameCategory, setCategory } from '@/db/repo';
 import { saidPlainly } from '@/lib/errors';
 import { capReading } from '@/domain/cap';
-import { dayKey } from '@/domain/projection';
-import { isSpend, paymentSeries } from '@/domain/spend';
+import { format, startOfMonth } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { dayKey, parseDay, spendByCategory } from '@/domain/projection';
+import { paymentSeries } from '@/domain/spend';
 import { brlShort } from '@/domain/money';
 import {
   categoryIcons,
@@ -42,9 +44,10 @@ const ENTER = { delay: 120, step: 55, cap: 8, rise: 10, shift: 22 } as const;
  * That is the difference between filing and refining, and `tetos.tsx` is right that only one of them
  * belongs in front of a person's money.
  *
- * The list says so in its own structure. A category the owner has dressed carries its colour on the
- * rule beneath it; one still wearing its assigned look carries the ordinary hairline. Nothing is
- * marked "incomplete", because nothing is.
+ * The list says so in its own structure: every row is drawn the same way whether the owner dressed
+ * it or not. Nothing is marked "incomplete", because nothing is. (The rule under a dressed row used
+ * to wear its colour, which spent a category hue on "somebody edited this" — the one thing DESIGN.md
+ * says those hues may never carry.)
  *
  * The ceiling lives in this form too, because to the owner a teto is something a category *has*.
  * `tetos.tsx` keeps its own screen for the reading — spent, remaining, per-day, the day it breaks —
@@ -85,18 +88,45 @@ function Body() {
    * category with a ceiling stays visible at zero spend, for the reason `tetos.tsx` gives: hiding a
    * budget while it is being respected hides the evidence that it works.
    */
+  /*
+   * The window: this month, through today.
+   *
+   * It used to be no window at all — every spend the ledger ever held, under no label — so a row
+   * read "Transporte R$ 1.499,66" beside a Home that said R$ 694,66 and neither screen was wrong
+   * about anything but the period. The month to date is the period this screen's own ceilings are
+   * measured in (`capReading`), and the one Análise compares per category, so the figure beside a
+   * teto is now the figure the teto is judged against. It is stated on screen, under the heading.
+   */
+  const monthFrom = useMemo(() => dayKey(startOfMonth(parseDay(today))), [today]);
+
   const rows = useMemo(() => {
-    const payments = paymentSeries(series);
     const spent = new Map<string, number>();
-    for (const e of entries) {
-      if (!isSpend(e, payments)) continue;
-      const key = e.category.trim().toLocaleLowerCase('pt-BR');
-      spent.set(key, (spent.get(key) ?? 0) + e.amountCents);
+    for (const c of spendByCategory(entries, monthFrom, today, paymentSeries(series))) {
+      const key = c.category.trim().toLocaleLowerCase('pt-BR');
+      spent.set(key, (spent.get(key) ?? 0) + c.cents);
     }
+
+    /*
+     * Names only ever used for money coming in. "Renda R$ 0,00" in a list of what things cost read
+     * as a category that cost nothing this month, when it is not a cost at all. Those rows say what
+     * they are instead of printing a spend figure, and sit after the ones that do spend.
+     */
+    const direction = new Map<string, Set<string>>();
+    for (const r of [...entries, ...series]) {
+      const key = r.category.trim().toLocaleLowerCase('pt-BR');
+      const seen = direction.get(key) ?? new Set<string>();
+      seen.add(r.direction);
+      direction.set(key, seen);
+    }
+    const income = (name: string) => {
+      const seen = direction.get(name.toLocaleLowerCase('pt-BR'));
+      return !!seen && seen.size === 1 && seen.has('in');
+    };
 
     return categoryViews(categories, caps, entries, series)
       .map((view) => ({
         view,
+        income: income(view.name) && view.capCents == null,
         spent: spent.get(view.name.toLocaleLowerCase('pt-BR')) ?? 0,
         reading:
           view.capCents == null
@@ -105,11 +135,12 @@ function Body() {
       }))
       .sort(
         (a, b) =>
+          Number(a.income) - Number(b.income) ||
           b.spent - a.spent ||
           (b.view.capCents ? 1 : 0) - (a.view.capCents ? 1 : 0) ||
           a.view.name.localeCompare(b.view.name, 'pt-BR'),
       );
-  }, [categories, caps, entries, series, today]);
+  }, [categories, caps, entries, series, today, monthFrom]);
 
   const taken = useMemo(
     () => new Set(rows.map((r) => r.view.name.toLocaleLowerCase('pt-BR'))),
@@ -119,7 +150,7 @@ function Body() {
   return (
     <>
       <BackBar />
-      <KeyboardAwareScrollView contentContainerStyle={styles.scroll}>
+      <KeyboardAwareScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <Reveal index={0} {...ENTER}>
           <Txt variant="heading" f="sansSemibold">
             Categorias
@@ -127,6 +158,9 @@ function Body() {
           <Txt variant="body" t="muted" style={styles.lede}>
             Elas nascem sozinhas do que você lança, já com ícone e cor. Aqui você troca o que quiser
             e diz quanto cada uma pode custar num mês.
+          </Txt>
+          <Txt variant="micro" t="faint" style={styles.period}>
+            {`Valores: o que saiu em ${format(parseDay(today), 'MMMM', { locale: ptBR })} até hoje.`}
           </Txt>
         </Reveal>
 
@@ -162,14 +196,15 @@ function Body() {
                 onError={(e) => snack(saidPlainly(e), 'error')}
               />
             ) : (
-              <Press onPress={() => setCreating(true)} style={styles.new}>
-                <View style={styles.newMark}>
-                  <Txt variant="body" t="muted">
-                    +
-                  </Txt>
-                </View>
-                <Txt variant="body" t="muted">
-                  Criar uma categoria
+              /* Worded and drawn like "+ Nova conta ou cartão" and "+ Nova recorrência": one way to
+                 add a thing, everywhere. */
+              <Press
+                onPress={() => setCreating(true)}
+                style={styles.new}
+                accessibilityLabel="Nova categoria"
+              >
+                <Txt variant="body" t="ink">
+                  + Nova categoria
                 </Txt>
               </Press>
             )}
@@ -194,6 +229,7 @@ function Body() {
               <Row
                 view={row.view}
                 spent={row.spent}
+                income={row.income}
                 burstsOn={row.reading?.burstsOn ?? null}
                 onPress={() => setOpen(row.view.name)}
               />
@@ -215,11 +251,13 @@ function Body() {
 function Row({
   view,
   spent,
+  income,
   burstsOn,
   onPress,
 }: {
   view: CategoryView;
   spent: number;
+  income: boolean;
   burstsOn: string | null;
   onPress: () => void;
 }) {
@@ -227,7 +265,7 @@ function Row({
   const over = view.capCents != null && spent > view.capCents;
 
   return (
-    <Press onPress={onPress} style={styles.row}>
+    <Press onPress={onPress} style={styles.row} accessibilityLabel={`Editar ${view.name}`}>
       <View style={styles.rowHead}>
         <CategoryIcon name={view.icon} size={20} tint={tint} />
         <View style={styles.rowText}>
@@ -237,10 +275,14 @@ function Row({
           {view.capCents != null ? (
             <Txt variant="micro" t={over ? 'negative' : 'faint'}>
               {over
-                ? `passou o teto de ${brlShort(view.capCents)}`
+                ? `passou do teto de ${brlShort(view.capCents)}`
                 : burstsOn
-                  ? `teto de ${brlShort(view.capCents)} · o ritmo fura dia ${burstsOn.slice(8)}`
+                  ? `teto de ${brlShort(view.capCents)} · no ritmo, passa do teto dia ${Number(burstsOn.slice(8))}`
                   : `teto de ${brlShort(view.capCents)}`}
+            </Txt>
+          ) : income ? (
+            <Txt variant="micro" t="faint" numberOfLines={1}>
+              {view.description ? `entrada · ${view.description}` : 'entrada, não conta como gasto'}
             </Txt>
           ) : view.description ? (
             <Txt variant="micro" t="faint" numberOfLines={1}>
@@ -248,11 +290,9 @@ function Row({
             </Txt>
           ) : null}
         </View>
-        <Amount cents={spent} size="body" tone={spent > 0 ? 'ink' : 'faint'} />
+        {income ? null : <Amount cents={spent} size="body" tone={spent > 0 ? 'ink' : 'faint'} />}
       </View>
-      <View
-        style={[styles.rowRule, view.authored ? { backgroundColor: tint, opacity: 0.9 } : null]}
-      />
+      <View style={styles.rowRule} />
     </Press>
   );
 }
@@ -381,15 +421,18 @@ function Editor({
         maxLength={160}
       />
 
+      {/* No word for a placeholder: this is a figure field, set in mono, and "sem teto" was the one
+          sentence on the screen typed like a number. A dash after the field's own "R$" reads as "no
+          figure" rather than the "0,00" a ceiling of zero would be; the hint says what empty means. */}
       <MoneyField
         label="TETO POR MÊS"
         cents={capCents}
         onChangeCents={setCapCents}
-        placeholder="sem teto"
+        placeholder="—"
       />
       <Txt variant="micro" t="faint" style={styles.hint}>
-        Com um teto, OTTO fica calado enquanto ele aguenta e avisa quando o ritmo do mês não leva ele
-        até o fim.
+        Em branco, a categoria fica sem teto. Com um teto, o OTTO fica calado enquanto ele aguenta e
+        avisa quando o ritmo do mês não chega ao fim dele.
       </Txt>
 
       <View style={styles.actions}>
@@ -417,20 +460,14 @@ function Editor({
 }
 
 const styles = StyleSheet.create({
-  scroll: { paddingHorizontal: space.gutter, paddingBottom: space.xxxl },
+  // No horizontal padding: `Screen` already holds the gutter, and adding it again here put every row
+  // 48dp in from the edge, twice the margin of every other screen.
+  scroll: { paddingBottom: space.xxxl },
   lede: { marginTop: space.sm },
+  period: { marginTop: space.sm },
   notice: { marginTop: space.xl },
 
-  new: { flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: 52, marginTop: space.xl },
-  newMark: {
-    width: 26,
-    height: 26,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.hairlineStrong,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  new: { minHeight: 52, marginTop: space.xl, justifyContent: 'center' },
 
   row: { paddingTop: space.lg },
   rowHead: { flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: 44 },

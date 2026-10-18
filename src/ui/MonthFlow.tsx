@@ -25,6 +25,10 @@ import type { Cents } from '@/domain/money';
  * The bar under each figure is not decoration and not a progress ring: it is the split between what
  * has already moved and what is still forecast, which is the one thing the totals hide. Half a
  * month's outflow already paid and half still ahead are the same number and very different news.
+ *
+ * They are named "saídas" and "entradas" of the month, not "a pagar" and "a receber". Each total
+ * includes what has already moved — the bar is that split — so "a pagar" over money already paid,
+ * and over a closed month with nothing left to pay, named the figure as something it is not.
  */
 export function MonthFlow({
   outflow,
@@ -38,8 +42,8 @@ export function MonthFlow({
    * Where each figure goes when it is touched, told which figure it was.
    *
    * A total is a claim about a set of movements, and the owner who reads it wants that set — not
-   * the month it sits in, the set. Which is why the direction travels with the tap: "a pagar" and
-   * "a receber" are two different questions and landing both on the same page answers neither.
+   * the month it sits in, the set. Which is why the direction travels with the tap: "saídas" and
+   * "entradas" are two different questions and landing both on the same page answers neither.
    */
   onOpen,
 }: {
@@ -54,7 +58,7 @@ export function MonthFlow({
   return (
     <View style={styles.row}>
       <Column
-        label="a pagar"
+        label="saídas"
         total={outflow}
         done={outflowDone}
         tint={color.negative}
@@ -65,7 +69,7 @@ export function MonthFlow({
       />
       <View style={styles.split} />
       <Column
-        label="a receber"
+        label="entradas"
         total={inflow}
         done={inflowDone}
         tint={color.positive}

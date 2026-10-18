@@ -13,7 +13,7 @@ import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
 import { Press } from '@/ui/Press';
 import { Wordmark } from '@/ui/Wordmark';
-import { TabBar } from '@/ui/TabBar';
+import { useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
@@ -54,6 +54,7 @@ export default function Ajustes() {
 }
 
 function AjustesBody() {
+  const clearance = useTabBarClearance();
   // One arrival for all four tabs, carrying the direction of the move that produced it.
   const ENTER = useTabEntrance();
 
@@ -107,7 +108,7 @@ function AjustesBody() {
       } else {
         const ok = await enable();
         snack(
-          ok ? 'Trinco ligado. OTTO fecha os olhos ao sair.' : 'Não consegui confirmar que é você.',
+          ok ? 'Trinco ligado. OTTO fecha os olhos ao sair.' : 'Não foi possível confirmar que é você.',
           ok ? 'info' : 'error',
         );
       }
@@ -116,9 +117,24 @@ function AjustesBody() {
     }
   };
 
-  /** A second deliberate tap arms the OS biometric prompt; neither step alone can erase data. */
+  /**
+   * A second deliberate tap arms the OS biometric prompt; neither step alone can erase data.
+   *
+   * With no biometry enrolled the protection still holds — nothing is deleted — but the row says
+   * why up front and the tap explains what to do, instead of arming, failing silently at the OS, and
+   * then reporting "a biometria não foi confirmada" as if the owner had refused it (AJ-04).
+   */
   const destroy = async (key: string, prompt: string, work: () => Promise<void>, done: string) => {
     if (busy) return;
+    if (ready && !available) {
+      snack(
+        biometry?.hardware
+          ? 'Excluir pede sua biometria, e não há nenhuma cadastrada. Cadastre uma nas configurações do Android e volte aqui.'
+          : 'Excluir pede biometria, e este aparelho não tem sensor.',
+        'error',
+      );
+      return;
+    }
     if (armed !== key) {
       setArmed(key);
       snack('Toque novamente para confirmar. A biometria será solicitada.', 'info');
@@ -129,7 +145,7 @@ function AjustesBody() {
     try {
       const confirmed = await confirmDestructiveAction(prompt);
       if (!confirmed) {
-        snack('Exclusão cancelada: a biometria não foi confirmada.', 'error');
+        snack('Nada foi excluído: a biometria não confirmou.', 'error');
         return;
       }
       await work();
@@ -160,17 +176,18 @@ function AjustesBody() {
     <>
       <ScrollView
         style={styles.flex}
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingBottom: clearance }]}
         showsVerticalScrollIndicator={false}
       >
         {/*
-          The mark at reading size, not at header size. This is the one screen where it is the
-          subject rather than the letterhead, so it is given the room to be looked at — and it is
-          carrying the trinco's state while you look.
+          The mark at the same 22dp every other tab carries it at. It was drawn at 40 here, as the
+          subject rather than the letterhead — but switching tabs then made the header jump to
+          twice its size and back, which read as a different app (AJ-05). It still carries the
+          trinco's state; the line under it says the same in words.
         */}
         <Reveal index={0} {...ENTER.head}>
           <View style={styles.identity}>
-            <Wordmark height={40} alive mood={enabled ? 'guard' : 'idle'} />
+            <Wordmark height={22} alive mood={enabled ? 'guard' : 'idle'} />
             <Txt variant="micro" t="faint" style={styles.eyebrow}>
               {enabled ? 'de olhos fechados' : 'de olhos abertos'}
             </Txt>
@@ -218,7 +235,7 @@ function AjustesBody() {
                   : !biometry?.hardware
                     ? 'este aparelho não tem sensor'
                     : !biometry.enrolled
-                      ? `nenhuma ${biometry.name.toLowerCase()} cadastrada no aparelho`
+                      ? 'nenhuma biometria cadastrada no aparelho'
                       : enabled
                         ? `${biometry.name} · ligado`
                         : `${biometry.name} · desligado`}
@@ -309,7 +326,7 @@ function AjustesBody() {
           <View style={styles.rowText}>
             <Txt variant="body">Calendário financeiro</Txt>
             <Txt variant="micro" t="faint">
-              veja o que aconteceu, o que vem e o que está pendente
+              veja o que aconteceu, o que vem e o que venceu
             </Txt>
           </View>
           <Txt variant="micro" t="muted">
@@ -322,10 +339,10 @@ function AjustesBody() {
         <View style={styles.facts}>
           <Fact label="lançamentos" value={String(held.entries)} />
           <Fact label="recorrências" value={String(held.series)} />
-          <Fact
-            label={held.accounts === 1 ? 'conta' : 'contas'}
-            value={String(held.accounts) + (held.cards > 0 ? ` · ${held.cards} cartão` : '')}
-          />
+          <Fact label={held.accounts === 1 ? 'conta' : 'contas'} value={String(held.accounts)} />
+          {held.cards > 0 ? (
+            <Fact label={held.cards === 1 ? 'cartão' : 'cartões'} value={String(held.cards)} />
+          ) : null}
           {held.since ? <Fact label="desde" value={held.since} /> : null}
         </View>
 
@@ -334,11 +351,12 @@ function AjustesBody() {
         <Press
           onPress={() => router.push('/contas')}
           style={styles.row}
-          accessibilityLabel="Gerenciar exclusões de contas e cartões"
+          accessibilityLabel="Excluir conta bancária ou cartão"
         >
+          {/* "conta bancária": a bare "conta" next to "Sair da conta" read as the OTTO login. */}
           <View style={styles.rowText}>
             <Txt variant="body" t="muted">
-              Excluir conta ou cartão
+              Excluir conta bancária ou cartão
             </Txt>
             <Txt variant="micro" t="faint">
               escolha o item em Contas e cartões e confirme com biometria
@@ -352,22 +370,31 @@ function AjustesBody() {
         <Press
           onPress={() => void destroy(
             'all-data',
-            'Confirme para apagar todos os seus dados financeiros',
+            'Confirme para excluir todos os seus dados financeiros',
             async () => { await clearLedger(); await load(); },
-            'Todos os dados financeiros foram removidos.',
+            'Todos os dados financeiros foram excluídos.',
           )}
           disabled={busy}
           style={styles.row}
-          accessibilityLabel="Remover todos os dados financeiros"
+          accessibilityLabel={
+            armed === 'all-data' ? 'Toque de novo e confirme sua biometria' : 'Excluir todos os dados financeiros'
+          }
         >
+          {/*
+            Red only once it is armed — the one moment red is allowed to mean something other than
+            money (a destructive action about to happen). At rest it was red permanently, which made
+            it the loudest row on the screen for an action nobody takes (AJ-05).
+          */}
           <View style={styles.rowText}>
-            <Txt variant="body" t={armed === 'all-data' ? 'negative' : 'negative'}>
-              {armed === 'all-data' ? 'Toque de novo e confirme sua biometria' : 'Remover todos os dados'}
+            <Txt variant="body" t={armed === 'all-data' ? 'negative' : 'muted'}>
+              {armed === 'all-data' ? 'Toque de novo e confirme sua biometria' : 'Excluir todos os dados'}
             </Txt>
             <Txt variant="micro" t="faint">
-              {armed === 'all-data'
-                ? 'apaga contas, cartões, lançamentos e recorrências do banco'
-                : 'mantém seu acesso, mas apaga seu razão definitivamente'}
+              {ready && !available
+                ? 'pede biometria: cadastre uma nas configurações do Android para poder excluir'
+                : armed === 'all-data'
+                  ? 'exclui contas, cartões, lançamentos e recorrências do banco'
+                  : 'mantém seu acesso, mas exclui seu razão definitivamente'}
             </Txt>
           </View>
         </Press>
@@ -377,18 +404,27 @@ function AjustesBody() {
         {/*
           Signing out lives here now, and not at the far end of the home screen's scroll where it was
           parked with a comment saying it would move when this screen existed.
+
+          It arms first, like every row in this screen that ends something: one stray tap on the last
+          row of the scroll should not cost the owner a login. No biometry — nothing is lost by
+          leaving, so the second tap is the whole confirmation.
         */}
         <Press
           onPress={() => {
+            if (armed !== 'sign-out') {
+              setArmed('sign-out');
+              return;
+            }
+            setArmed(null);
             void signOut();
             router.replace('/sign-in');
           }}
           style={styles.row}
-          accessibilityLabel="Sair da conta"
+          accessibilityLabel={armed === 'sign-out' ? 'Toque de novo para sair' : 'Sair da conta'}
         >
           <View style={styles.rowText}>
-            <Txt variant="body" t="muted">
-              Sair da conta
+            <Txt variant="body" t={armed === 'sign-out' ? 'ink' : 'muted'}>
+              {armed === 'sign-out' ? 'Toque de novo para sair' : 'Sair da conta'}
             </Txt>
             <Txt variant="micro" t="faint">
                 seu razão permanece protegido no banco
@@ -396,11 +432,6 @@ function AjustesBody() {
           </View>
         </Press>
       </ScrollView>
-
-      <TabBar
-        active="settings"
-        onCapture={() => router.push('/lancar')}
-      />
     </>
   );
 }
@@ -448,11 +479,15 @@ function Section({ label }: { label: string }) {
   );
 }
 
-/** One thing the ledger knows about itself. Figure first, in mono, because it is a figure. */
+/**
+ * One thing the ledger knows about itself. Figure first, in mono because it is a figure — and only
+ * then: "setembro de 2026" is a date written as words, which is sans like every other word.
+ */
 function Fact({ label, value }: { label: string; value: string }) {
+  const figure = /^\d+$/.test(value);
   return (
     <View style={styles.fact}>
-      <Txt variant="body" f="monoMedium" t="ink" tabular>
+      <Txt variant="body" f={figure ? 'monoMedium' : 'sansMedium'} t="ink" tabular={figure}>
         {value}
       </Txt>
       <Txt variant="micro" t="faint">

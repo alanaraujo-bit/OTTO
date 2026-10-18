@@ -8,7 +8,9 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Txt } from '@/theme/text';
 import { Amount } from '../Amount';
-import { color, space } from '@/theme/tokens';
+import { CategoryIcon } from '../CategoryIcon';
+import { categoryHue, color, space, type CategoryHue } from '@/theme/tokens';
+import type { CategoryIconName } from '@/domain/category';
 import { duration, ease, stagger, useReducedMotion } from '@/theme/motion';
 import type { Cents } from '@/domain/money';
 
@@ -33,6 +35,13 @@ export interface PaceDatum {
    * time someone reuses it.
    */
   past?: boolean;
+  /**
+   * A category's identity, when the row is one: drawn as the Home ring's legend draws it — the hue
+   * as a dot, the glyph beside it — so a category is the same mark on both screens. Months have no
+   * identity and pass neither.
+   */
+  icon?: CategoryIconName;
+  hue?: CategoryHue;
 }
 
 /**
@@ -115,6 +124,14 @@ function Row({
   return (
     <View style={styles.row}>
       <View style={styles.head}>
+        {datum.icon ? (
+          <View style={styles.identity}>
+            <View
+              style={[styles.dot, { backgroundColor: (datum.hue && categoryHue[datum.hue]) ?? color.inkFaint }]}
+            />
+            <CategoryIcon name={datum.icon} size={17} tint={color.inkMuted} />
+          </View>
+        ) : null}
         <Txt variant="body" t={datum.past ? 'muted' : 'ink'} numberOfLines={1} style={styles.label}>
           {datum.label}
         </Txt>
@@ -145,7 +162,9 @@ function Row({
 const styles = StyleSheet.create({
   row: { paddingTop: space.lg },
   head: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
-  label: { flexShrink: 1, paddingRight: space.md },
+  label: { flexShrink: 1, flexGrow: 1, paddingRight: space.md },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginRight: space.md, alignSelf: 'center' },
+  dot: { width: 9, height: 9, borderRadius: 999 },
   rail: { marginTop: space.sm },
   track: {
     height: 2,

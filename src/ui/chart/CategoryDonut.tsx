@@ -26,6 +26,8 @@ const CIRC = 2 * Math.PI * R;
 const GAP = 2 / CIRC;
 
 export interface DonutSlice {
+  /** Unique within the ring — see `ringCut`. Never the label: two slices may not share a key. */
+  key: string;
   category: string;
   icon: CategoryIconName;
   hue: CategoryHue;
@@ -72,7 +74,7 @@ export function CategoryDonut({
 }: {
   slices: DonutSlice[];
   total: Cents;
-  /** What the figure in the middle is — "gastos do mês", "últimos 30 dias". */
+  /** What the figure in the middle is. The period belongs to the section heading, not here. */
   label: string;
   delay?: number;
   onSelect?: (category: string) => void;
@@ -142,23 +144,29 @@ export function CategoryDonut({
             />
 
             {arcs.map((a) => (
-              <Arc key={a.category} arc={a} sweep={sweep} />
+              <Arc key={a.key} arc={a} sweep={sweep} />
             ))}
           </G>
         </Svg>
 
-        {/* The dominant numeral, in the slot DESIGN.md reserves for it on every screen. */}
+        {/*
+          The ring's total, at heading size. It used to be set at display scale, which made it a
+          second hero on a screen DESIGN.md allows one — and at 44sp it was wider than the hole, so
+          the "R$" and the centavos sat on the arcs. Heading, without centavos (the legend carries
+          them), fits the 156dp hole with room to spare even at a large font scale, and the section
+          heading above already names the period, so the caption here only says what the figure is.
+        */}
         <View style={styles.center} pointerEvents="none">
-          <Amount cents={total} size="hero" tone="ink" />
+          <Amount cents={total} size="heading" tone="ink" showCents={false} />
           <Txt variant="micro" t="faint" style={styles.centerLabel}>
-            {label.toLocaleUpperCase('pt-BR')}
+            {label}
           </Txt>
         </View>
       </View>
 
       <View style={styles.legend}>
         {arcs.map((a) => (
-          <LegendRow key={a.category} slice={a} onSelect={onSelect} />
+          <LegendRow key={a.key} slice={a} onSelect={onSelect} />
         ))}
       </View>
     </View>
@@ -273,7 +281,7 @@ function LegendRow({
     </View>
   );
 
-  // "Outros" is a remainder, not a place. There is nothing to open.
+  // The remainder ("Demais") is not a place. There is nothing to open.
   if (!onSelect || slice.isRest) return row;
   return (
     <Press onPress={() => onSelect(slice.category)} hitSlop={6}>

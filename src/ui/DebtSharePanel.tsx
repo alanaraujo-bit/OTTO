@@ -39,7 +39,7 @@ export function DebtSharePanel({ series }: { series: Series }) {
       })
       .catch((error) => {
         if (!alive) return;
-        setLoadError(error instanceof Error ? error.message : 'Não consegui consultar o compartilhamento.');
+        setLoadError(error instanceof Error ? error.message : 'Não foi possível consultar o compartilhamento.');
       })
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
@@ -71,7 +71,7 @@ export function DebtSharePanel({ series }: { series: Series }) {
       setShare(current);
       await send(current);
     } catch (error) {
-      snack(error instanceof Error ? error.message : 'Não consegui compartilhar.', 'error');
+      snack(error instanceof Error ? error.message : 'Não foi possível compartilhar.', 'error');
     } finally {
       setWorking(false);
     }
@@ -85,7 +85,7 @@ export function DebtSharePanel({ series }: { series: Series }) {
       setShare(null);
       snack('O link deixou de mostrar esta dívida.', 'info');
     } catch (error) {
-      snack(error instanceof Error ? error.message : 'Não consegui revogar o link.', 'error');
+      snack(error instanceof Error ? error.message : 'Não foi possível revogar o link.', 'error');
     } finally {
       setWorking(false);
     }
@@ -97,7 +97,8 @@ export function DebtSharePanel({ series }: { series: Series }) {
       <View style={styles.heading}>
         <Txt variant="heading" f="sansSemibold">Acompanhar juntos</Txt>
         {share ? (
-          <Txt variant="micro" t={share.acceptedAt ? 'positive' : 'warning'} f="sansMedium">
+          // Status in ink: green and amber here read as "paid" and "late" on a screen about a debt.
+          <Txt variant="micro" t={share.acceptedAt ? 'ink' : 'muted'} f="sansMedium">
             {share.acceptedAt ? 'CONECTADO' : 'LINK ATIVO'}
           </Txt>
         ) : null}

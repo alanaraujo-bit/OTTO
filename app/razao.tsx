@@ -7,6 +7,7 @@ import {
   type LayoutChangeEvent,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { forecastRoute } from '@/lib/nav';
 import { addMonths, endOfMonth, format, startOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import Svg, { Line } from 'react-native-svg';
@@ -14,7 +15,7 @@ import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
 import { Wordmark } from '@/ui/Wordmark';
 import { Amount } from '@/ui/Amount';
-import { TabBar } from '@/ui/TabBar';
+import { useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { SwipeRow } from '@/ui/SwipeRow';
 import { Press } from '@/ui/Press';
@@ -23,6 +24,7 @@ import { color, space, type } from '@/theme/tokens';
 import { useSnackbar } from '@/ui/Snackbar';
 import { useLedger } from '@/state/ledger';
 import { deleteEntry } from '@/db/repo';
+import { saidPlainly } from '@/lib/errors';
 import { dayKey, ledgerTape, parseDay, type TapeDay, type TapeItem } from '@/domain/projection';
 import { brl } from '@/domain/money';
 import type { Direction } from '@/domain/model';
@@ -69,9 +71,11 @@ export default function Razao() {
 
 type Row =
   | { type: 'day'; key: string; day: TapeDay; today: boolean }
-  | { type: 'item'; key: string; item: TapeItem };
+  | { type: 'item'; key: string; item: TapeItem }
+  | { type: 'carry'; key: string; cents: number };
 
 function RazaoBody() {
+  const clearance = useTabBarClearance();
   // One arrival for all four tabs, carrying the direction of the move that produced it.
   const ENTER = useTabEntrance();
   const snack = useSnackbar();
@@ -212,6 +216,19 @@ function RazaoBody() {
       y += H.day;
       rows.push({ type: 'day', key: day.date, day, today: day.date === today });
 
+      /*
+       * What was already late at today, counted on the first day the forecast owns. Without a row
+       * of its own the balance on that day jumped by the overdue total with nothing under the rule
+       * to account for it — the one place the column could not be checked by adding it up. Same
+       * height as an item, so the offsets stay exact. A cut tape carries no running balance, so it
+       * has nothing here to explain.
+       */
+      if (!cut && day.carried !== 0) {
+        offsets.push(y);
+        y += H.item;
+        rows.push({ type: 'carry', key: day.date + '/carried', cents: day.carried });
+      }
+
       for (const item of day.items) {
         offsets.push(y);
         y += H.item;
@@ -220,7 +237,7 @@ function RazaoBody() {
     }
 
     return { rows, sticky, offsets, landRow: landRow ?? 0 };
-  }, [tape, land, today, H]);
+  }, [tape, land, today, H, cut]);
 
   /*
    * Changing the cut re-anchors the list.
@@ -247,6 +264,11 @@ function RazaoBody() {
       animated: false,
     });
   }, [cut]);
+
+  const horizon = useMemo(
+    () => format(endOfMonth(addMonths(parseDay(today), 6)), "MMMM 'de' yyyy", { locale: ptBR }),
+    [today],
+  );
 
   const onRule = (e: LayoutChangeEvent) => {
     const w = Math.round(e.nativeEvent.layout.width);
@@ -316,15 +338,29 @@ function RazaoBody() {
           keyExtractor={(r) => r.key}
           renderItem={({ item: row }) =>
             row.type === 'day' ? (
-              <DayRule day={row.day} today={row.today} height={H.day} width={ruleWidth} cut={cut} />
+              <DayRule
+                day={row.day}
+                today={row.today}
+                height={H.day}
+                width={ruleWidth}
+                cut={cut}
+                year={today.slice(0, 4)}
+              />
+            ) : row.type === 'carry' ? (
+              <CarriedRow cents={row.cents} height={H.item} />
             ) : (
               <ItemRow
                 item={row.item}
                 height={H.item}
                 holding={holding}
-                onDeleted={() => {
-                  void load();
-                  snack('Lançamento apagado.', 'info');
+                onDelete={async (id) => {
+                  try {
+                    await deleteEntry(id);
+                    void load();
+                    snack('Lançamento excluído.', 'info');
+                  } catch (e) {
+                    snack(saidPlainly(e), 'error');
+                  }
                 }}
               />
             )
@@ -357,16 +393,22 @@ function RazaoBody() {
            */
           removeClippedSubviews={false}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scroll}
+          /*
+           * The tape stops where projecting stops being honest, and it says so. Ending on the last
+           * forecast with nothing under it read as the ledger running out, not as a decision.
+           * A footer rather than a header, because it sits after every measured row and so cannot
+           * move an offset `getItemLayout` reports.
+           */
+          ListFooterComponent={
+            <Txt variant="micro" t="faint" style={styles.end}>
+              {`A previsão vai até ${horizon}. Depois disso, OTTO não arrisca um número.`}
+            </Txt>
+          }
+          contentContainerStyle={[styles.scroll, { paddingBottom: clearance }]}
         />
       ) : (
         <View style={styles.flex} />
       )}
-
-      <TabBar
-        active="ledger"
-        onCapture={() => router.push('/lancar')}
-      />
     </>
   );
 }
@@ -387,6 +429,7 @@ function DayRule({
   height,
   width,
   cut,
+  year,
 }: {
   /** The direction the tape is cut to, when it is. Changes what the rule's figure means. */
   cut: Direction | null;
@@ -394,10 +437,23 @@ function DayRule({
   today: boolean;
   height: number;
   width: number;
+  /** The current year. A day in any other one prints its year — see below. */
+  year: string;
 }) {
   const d = parseDay(day.date);
-  const stamp = format(d, 'dd MMM', { locale: ptBR }).toUpperCase();
-  const weekday = format(d, 'EEE', { locale: ptBR }).toUpperCase().replace('.', '');
+  /*
+   * The tape runs from last year's history to next year's forecast with no month boundary in it, so
+   * "08 MAR" alone could be either March. The year is printed only when it is not this one: the
+   * common case stays short, and the stamp that would be ambiguous is the one that says more.
+   *
+   * Figures in mono, words in sans — the weekday used to be set in mono capitals like a number. The
+   * capitals stay: this is a group label, in the same sans caps as every section heading.
+   */
+  const dd = format(d, 'dd');
+  const month = format(d, 'MMM', { locale: ptBR }).toUpperCase().replace('.', '');
+  const otherYear = day.date.slice(0, 4) !== year ? day.date.slice(0, 4) : null;
+  const weekday = format(d, 'EEEE', { locale: ptBR }).split('-')[0] as string;
+  const tone = today ? 'ink' : 'faint';
 
   return (
     <View style={[styles.dayRow, { height }]}>
@@ -424,14 +480,18 @@ function DayRule({
       )}
 
       <View style={styles.dayLine}>
-        <Txt
-          variant="micro"
-          f="monoMedium"
-          t={today ? 'ink' : 'faint'}
-          numberOfLines={1}
-          style={styles.stamp}
-        >
-          {stamp + '  ·  ' + (today ? 'HOJE' : weekday)}
+        <Txt variant="micro" f="sansMedium" t={tone} numberOfLines={1} style={styles.stamp}>
+          <Txt variant="micro" f="monoMedium" t={tone} tabular>
+            {dd}
+          </Txt>
+          {' ' + month}
+          {otherYear ? ' ' : null}
+          {otherYear ? (
+            <Txt variant="micro" f="monoMedium" t={tone} tabular>
+              {otherYear}
+            </Txt>
+          ) : null}
+          {'  ·  ' + (today ? 'HOJE' : weekday.toUpperCase())}
         </Txt>
         {/*
           The running figure. Faint while it is forecast, because a projected balance is a different
@@ -442,27 +502,68 @@ function DayRule({
           describing rows that are not on screen, which is the one thing a filter must not do. The
           tone follows the direction rather than the sign, because in a cut tape every figure is the
           same kind of money and `negative` would mean nothing but "this is the saídas page".
+
+          The word in front says which of the two it is. A bare number in the rule's corner was
+          read as either.
         */}
-        <Txt
-          variant="label"
-          f="monoMedium"
-          t={
-            cut
-              ? day.actual
-                ? 'muted'
-                : 'faint'
-              : day.balance < 0
-                ? 'negative'
-                : day.actual
+        <View style={styles.figure}>
+          <Txt variant="micro" t="faint" numberOfLines={1}>
+            {cut ? 'no dia ' : 'saldo '}
+          </Txt>
+          <Txt
+            variant="label"
+            f="monoMedium"
+            t={
+              cut
+                ? day.actual
                   ? 'muted'
                   : 'faint'
-          }
-          tabular
-          numberOfLines={1}
-        >
-          {cut ? brl(day.moved) : brl(day.balance)}
+                : day.balance < 0
+                  ? 'negative'
+                  : day.actual
+                    ? 'muted'
+                    : 'faint'
+            }
+            tabular
+            numberOfLines={1}
+          >
+            {cut ? (cut === 'in' && day.moved > 0 ? '+' : '') + brl(day.moved) : brl(day.balance)}
+          </Txt>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The overdue total, on the day it is counted.
+ *
+ * The rows it sums are drawn on the days they were due and move nothing there; this is where the
+ * forecast counts them (see `TapeDay.carried`). A readout and not a control — it is a sum of rows
+ * that each open on their own day.
+ */
+function CarriedRow({ cents, height }: { cents: number; height: number }) {
+  const out = cents < 0;
+  return (
+    <View
+      style={[styles.itemRow, { height }]}
+      accessible
+      accessibilityLabel={`Atrasados de antes, ${out ? '' : 'mais '}${brl(Math.abs(cents))}, contados neste dia`}
+    >
+      <View style={styles.itemName}>
+        <Txt variant="body" t="muted" numberOfLines={1}>
+          atrasados de antes
+        </Txt>
+        <Txt variant="micro" t="warning" numberOfLines={1}>
+          vencidos e não recebidos, contados aqui
         </Txt>
       </View>
+      <Amount
+        cents={cents}
+        direction={out ? 'out' : 'in'}
+        size="body"
+        tone={out ? 'negative' : 'positive'}
+      />
     </View>
   );
 }
@@ -479,14 +580,28 @@ function ItemRow({
   item,
   height,
   holding,
-  onDeleted,
+  onDelete,
 }: {
   item: TapeItem;
   height: number;
   /** The accounts that actually hold money — the only ones an antecipação may land in. */
   holding: Set<string>;
-  onDeleted: () => void;
+  onDelete: (id: string) => Promise<void>;
 }) {
+  /*
+   * Excluir asks twice, the way lançar's "Apagar lançamento" does. The swipe is a gesture a thumb
+   * makes by accident while scrolling the tape, so swipe-then-tap was one slip away from a lost
+   * lançamento with no way back — the snackbar is a readout that takes no touches, so there is no
+   * Desfazer to offer instead. The first tap keeps the strip open and turns the action into
+   * "confirmar"; it stands down on its own after a few seconds.
+   */
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+
   /*
    * An installment says which one it is before anything else — that is the whole reason it is
    * numbered, and with deferral two of them can land on one day. Everything else is told by the
@@ -512,12 +627,14 @@ function ItemRow({
         <Txt variant="body" t={item.settled ? 'ink' : 'muted'} numberOfLines={1}>
           {item.title}
         </Txt>
-        <Txt variant="micro" t="faint" numberOfLines={1}>
+        {/* Late is warning, the way the Home draws it. In faint it read as one more "previsto". */}
+        <Txt variant="micro" t={item.overdue ? 'warning' : 'faint'} numberOfLines={1}>
           {note}
         </Txt>
       </View>
       <Amount
-        cents={item.direction === 'out' ? -item.amountCents : item.amountCents}
+        cents={item.amountCents}
+        direction={item.direction}
         size="body"
         tone={item.direction === 'out' ? 'negative' : 'positive'}
       />
@@ -560,7 +677,7 @@ function ItemRow({
               }),
           },
         ]}
-        onPress={() => router.push({ pathname: '/recorrencia', params: { id: seriesId } })}
+        onPress={() => router.push(forecastRoute(seriesId, scheduled))}
       >
         {body}
       </SwipeRow>
@@ -578,11 +695,17 @@ function ItemRow({
           onPress: () => router.push({ pathname: '/lancar', params: { id: item.key } }),
         },
         {
-          label: 'excluir',
+          label: armed ? 'confirmar' : 'excluir',
           tone: 'negative',
-          warn: true,
+          warn: armed,
+          keepOpen: !armed,
           onPress: () => {
-            void deleteEntry(item.key).then(onDeleted);
+            if (!armed) {
+              setArmed(true);
+              return;
+            }
+            setArmed(false);
+            void onDelete(item.key);
           },
         },
       ]}
@@ -619,7 +742,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingTop: space.xs,
   },
-  stamp: { letterSpacing: 1.1 },
+  stamp: { letterSpacing: 0.8, flexShrink: 1, paddingRight: space.md },
+  figure: { flexDirection: 'row', alignItems: 'baseline' },
+  end: { paddingTop: space.xl, paddingBottom: space.lg },
 
   itemRow: { flexDirection: 'row', alignItems: 'center' },
   itemName: { flex: 1, paddingRight: space.lg },

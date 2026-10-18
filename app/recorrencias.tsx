@@ -8,6 +8,7 @@ import { BackBar } from '@/ui/BackBar';
 import { Reveal } from '@/ui/Reveal';
 import { Press } from '@/ui/Press';
 import { Amount } from '@/ui/Amount';
+import { FlowAmount } from '@/ui/FlowAmount';
 import { DebtLadder } from '@/ui/chart/DebtLadder';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
@@ -74,7 +75,7 @@ function RecorrenciasBody() {
         {error ? (
           <Reveal index={0} {...ENTER}>
             <Txt variant="heading" f="sansSemibold" style={styles.head}>
-              Não consegui ler seus dados.
+              Não foi possível ler seus dados.
             </Txt>
             <Txt variant="body" t="muted" style={styles.notice}>
               {error}
@@ -205,7 +206,7 @@ function Group({
 
   return (
     <Reveal index={index} {...ENTER} rise={0}>
-      <Section label={label} aside={brlShort(monthly) + ' /mês'} />
+      <Section label={label} aside={brlShort(monthly)} unit="por mês" />
       {items.map((c) => (
         <Press
           key={c.series.id}
@@ -222,19 +223,18 @@ function Group({
               instead of it: the reader knows the monthly number already, and it is the second one
               that changes a mind.
             */}
+            {/* Numbers in mono, the words around them in sans — and the yearly figure muted, not
+                bold: it is the second reading of the row, never louder than the name. */}
             <Txt variant="micro" t="faint" numberOfLines={1}>
               dia {c.series.dayOfMonth} · {c.series.category} ·{' '}
-              <Txt variant="micro" f="monoMedium" t="muted">
-                {brlShort(c.yearCents)} por ano
+              <Txt variant="micro" f="mono" t="muted" tabular>
+                {brlShort(c.yearCents)}
               </Txt>
+              {' por ano'}
               {ends(c) ? ` · acaba em ${ends(c)}` : ''}
             </Txt>
           </View>
-          <Amount
-            cents={c.series.direction === 'out' ? -c.monthlyCents : c.monthlyCents}
-            size="body"
-            tone={c.series.direction === 'out' ? 'ink' : 'positive'}
-          />
+          <FlowAmount cents={c.monthlyCents} direction={c.series.direction} />
         </Press>
       ))}
     </Reveal>
@@ -251,10 +251,11 @@ function Group({
  */
 function ends(c: Commitment): string | null {
   if (!c.series.endDate) return null;
-  return format(parseDay(c.series.endDate), "MMM 'de' yyyy", { locale: ptBR });
+  return format(parseDay(c.series.endDate), "MMMM 'de' yyyy", { locale: ptBR });
 }
 
-function Section({ label, aside }: { label: string; aside?: string }) {
+/** `aside` is a figure (mono); `unit`, if any, is the word after it (sans). */
+function Section({ label, aside, unit }: { label: string; aside?: string; unit?: string }) {
   return (
     <View style={styles.section}>
       <View style={styles.sectionRule} />
@@ -263,8 +264,11 @@ function Section({ label, aside }: { label: string; aside?: string }) {
           {label.toUpperCase()}
         </Txt>
         {aside ? (
-          <Txt variant="micro" f="mono" t="faint" tabular>
-            {aside}
+          <Txt variant="micro" t="faint">
+            <Txt variant="micro" f="mono" t="faint" tabular>
+              {aside}
+            </Txt>
+            {unit ? ` ${unit}` : ''}
           </Txt>
         ) : null}
       </View>

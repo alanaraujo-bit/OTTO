@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { StyleSheet, View } from 'react-native';
+import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import * as Crypto from 'expo-crypto';
 import { Screen } from '@/ui/Screen';
@@ -10,7 +10,9 @@ import { Press } from '@/ui/Press';
 import { Button } from '@/ui/Button';
 import { Field } from '@/ui/Field';
 import { KeyboardAwareScrollView } from '@/ui/KeyboardAwareScrollView';
-import { Backspace } from '@/ui/Icon';
+import { Backspace, ChevronRight } from '@/ui/Icon';
+import { Chip, ChipRow } from '@/ui/Chip';
+import { categoryOrderFor, MAX_CENTS } from '@/ui/choices';
 import { MonthStepper } from '@/ui/MonthStepper';
 import { Txt } from '@/theme/text';
 import { color, radius, space } from '@/theme/tokens';
@@ -22,19 +24,13 @@ import { deleteEntry, insertEntry, settleOccurrence, updateEntry } from '@/db/re
 import { addDays, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { dayKey, parseDay, project } from '@/domain/projection';
-import { settled } from '@/domain/settlement';
-import { statementCycle } from '@/domain/card';
-import { brlShort, parts } from '@/domain/money';
+import { isStatementSeries, settled } from '@/domain/settlement';
+import { statementCycle, withStatements } from '@/domain/card';
+import { brl, brlShort, parts } from '@/domain/money';
 import { capReading } from '@/domain/cap';
-import { pickerOrder } from '@/domain/category';
 import type { Direction, Occurrence } from '@/domain/model';
 
 const ENTER = { delay: 40, step: 70, cap: 5, rise: 10 } as const;
-
-/** Ceiling of R$ 999.999,99, so a stuck key cannot produce a figure the layout cannot hold. */
-const MAX_CENTS = 99_999_999;
-
-/** Enough to start with on a first run; anything the ledger already knows is added to these. */
 
 /**
  * Recording, which PRODUCT.md names as the product itself.
@@ -152,12 +148,23 @@ export default function Lancar() {
     if (accountId === null && payFrom[0]) setAccountId(payFrom[0].id);
   }, [accountId, payFrom]);
 
-  // The owner's own vocabulary first, ordered by how much they actually use it. A category list that
-  // does not learn is a list the owner scrolls past every single time.
+  // The owner's own vocabulary first, ordered by how much they actually use it — in *this*
+  // direction. A category list that does not learn is a list the owner scrolls past every single
+  // time, and one that offers "Renda" first on a Saída has not been listening. See
+  // `categoryOrderFor`: names used the other way are moved to the end, never removed.
   const categories = useMemo(
-    () => pickerOrder(entries, series, storedCategories),
-    [entries, series, storedCategories],
+    () => categoryOrderFor(direction, entries, series, storedCategories),
+    [direction, entries, series, storedCategories],
   );
+
+  /** What Salvar writes when no category was chosen — shown in the summary so it is never a surprise. */
+  const fallbackCategory = direction === 'in' ? 'Renda' : 'Outros';
+
+  /**
+   * Which picker is unfolded under the summary row, if any. One at a time: two chip rows open at
+   * once would push the description off the screen, which is the problem the summary row solves.
+   */
+  const [picker, setPicker] = useState<'category' | 'account' | null>(null);
 
   /*
    * A category is never "created" in this app — see `domain/category`'s own note: it exists the
@@ -217,8 +224,8 @@ export default function Lancar() {
     if (after <= cap.capCents) return null;
 
     return reading.spent >= cap.capCents
-      ? `Já passou o teto de ${brlShort(cap.capCents)} em ${category}. Isto leva a ${brlShort(after)}.`
-      : `Isto passa o teto de ${brlShort(cap.capCents)} em ${category}, em ${brlShort(after - cap.capCents)}.`;
+      ? `${category} já passou do teto de ${brlShort(cap.capCents)}. Com isto, vai a ${brlShort(after)}.`
+      : `Com isto, ${category} passa do teto de ${brlShort(cap.capCents)} em ${brlShort(after - cap.capCents)}.`;
   }, [category, cents, direction, caps, entries, series, date]);
 
   /**
@@ -233,13 +240,22 @@ export default function Lancar() {
    * Only the current month, and only what nothing has settled yet. Reaching further ahead would let
    * a single tap quietly retire a bill two months out, which is not what "recebi hoje" ever means.
    */
+  /**
+   * What can be settled from here: the rules, and each card's statement still to pay — a fatura is
+   * paid exactly the way a bill is, and from this same keypad. See `withStatements`.
+   */
+  const forecast = useMemo(
+    () => withStatements(accounts, entries, series, today),
+    [accounts, entries, series, today],
+  );
+
   const openNow = useMemo(() => {
     if (existing) return [];
     const t = parseDay(dayKey(new Date()));
     const from = dayKey(new Date(t.getFullYear(), t.getMonth(), 1));
     const to = dayKey(new Date(t.getFullYear(), t.getMonth() + 1, 0));
-    return project(series, from, to, settled(entries), deferrals).filter((o) => o.direction === direction);
-  }, [existing, series, entries, deferrals, direction]);
+    return project(forecast, from, to, settled(entries), deferrals).filter((o) => o.direction === direction);
+  }, [existing, forecast, entries, deferrals, direction]);
 
   /**
    * A forecast the owner asked to settle from somewhere else — the razão's swipe, a rule's own
@@ -261,11 +277,11 @@ export default function Lancar() {
     const from = dayKey(new Date(d.getFullYear(), d.getMonth(), 1));
     const to = dayKey(new Date(d.getFullYear(), d.getMonth() + 1, 0));
     return (
-      project(series, from, to, settled(entries), deferrals).find(
+      project(forecast, from, to, settled(entries), deferrals).find(
         (o) => o.seriesId === settlesSeries && o.date === settlesDate,
       ) ?? null
     );
-  }, [settlesSeries, settlesDate, series, entries, deferrals]);
+  }, [settlesSeries, settlesDate, forecast, entries, deferrals]);
 
   /*
    * Applied once. After this the form belongs to the owner — re-running it would snap the figure
@@ -295,6 +311,51 @@ export default function Lancar() {
   const money = parts(cents);
   const ready = cents > 0;
 
+  /*
+   * Leaving with something typed asks once.
+   *
+   * Back used to throw away a figure mid-entry without a word — the most expensive thing to lose on
+   * the screen whose whole promise is speed. The guard is the same two-tap rule every destructive
+   * row in this app uses, applied to Back: the first press stops and says what would be lost, a
+   * second within a few seconds leaves. It catches the system Back too (`beforeRemove`), since that
+   * is how most people leave a screen on Android. A save, a delete, or an untouched form passes
+   * straight through.
+   */
+  const navigation = useNavigation();
+  const dirty =
+    !saved &&
+    !saving &&
+    (existing
+      ? cents !== existing.amountCents ||
+        direction !== existing.direction ||
+        title !== existing.title ||
+        category !== existing.category ||
+        accountId !== existing.accountId ||
+        date !== existing.date ||
+        time !== (existing.time ?? '')
+      : cents > 0 || title.trim() !== '');
+  const dirtyRef = useRef(dirty);
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  }, [dirty]);
+  const leaveArmed = useRef(false);
+  useEffect(
+    () =>
+      navigation.addListener('beforeRemove', (e) => {
+        if (!dirtyRef.current || leaveArmed.current) return;
+        e.preventDefault();
+        leaveArmed.current = true;
+        setTimeout(() => {
+          leaveArmed.current = false;
+        }, 4000);
+        snack(
+          existing ? 'Voltar de novo descarta as alterações.' : 'Voltar de novo descarta este lançamento.',
+          'info',
+        );
+      }),
+    [navigation, snack, existing],
+  );
+
   const push = (digit: number) =>
     setCents((c) => Math.min(MAX_CENTS, c * 10 + digit));
   const pushPair = () => setCents((c) => Math.min(MAX_CENTS, c * 100));
@@ -312,10 +373,16 @@ export default function Lancar() {
       snack('Nenhuma conta encontrada.', 'error');
       return;
     }
+    // A statement paid from a card would retire the bill while moving no money anywhere the
+    // balance can see. `settleOccurrence` refuses it too; saying it here says it in words.
+    if (!existing && settles && isStatementSeries(settles.seriesId) && account.kind === 'card') {
+      snack('A fatura se paga de uma conta, não de um cartão.', 'error');
+      return;
+    }
 
     setSaving(true);
     try {
-      const chosen = category ?? (direction === 'in' ? 'Renda' : 'Outros');
+      const chosen = category ?? fallbackCategory;
       const time_ = time === '' ? null : time;
       if (existing) {
         await updateEntry({
@@ -394,6 +461,12 @@ export default function Lancar() {
     }
   };
 
+  const settleItems =
+    settles && !openNow.some((o) => o.seriesId === settles.seriesId && o.date === settles.date)
+      ? [settles, ...openNow]
+      : openNow;
+  const settleKey = (o: Occurrence) => o.seriesId + '@' + o.date;
+
   return (
     <Screen>
       <BackBar />
@@ -404,6 +477,22 @@ export default function Lancar() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        {/*
+          Editing says so. Without a title the edit form was indistinguishable from a new
+          lançamento already filled in, and Salvar on it rewrites a fact the owner recorded days
+          ago — worth one line of context, never a whole header.
+        */}
+        {existing ? (
+          <Reveal index={0} {...ENTER} rise={0}>
+            <Txt variant="heading" f="sansSemibold">
+              Editar lançamento
+            </Txt>
+            <Txt variant="micro" t="faint" style={styles.editSub}>
+              {`Lançado em ${format(parseDay(existing.date), "d 'de' MMMM", { locale: ptBR })}`}
+            </Txt>
+          </Reveal>
+        ) : null}
+
         <Reveal index={0} {...ENTER} rise={0}>
           <Segmented value={direction} onChange={setDirection} />
         </Reveal>
@@ -416,8 +505,7 @@ export default function Lancar() {
           It also takes the screen's slack, rather than the bottom of the screen taking it. With the
           keypad anchored to the thumb and everything above it sized to itself, the leftover height
           used to pool into one dead band above the keys. Giving it to the readout puts the empty
-          space around the one thing this screen exists for, and pushes description and category
-          down to where the thumb already is.
+          space around the one thing this screen exists for.
         */}
         <Reveal index={1} {...ENTER} style={styles.readoutBlock}>
           <View
@@ -442,126 +530,59 @@ export default function Lancar() {
           </View>
         </Reveal>
 
-        <Reveal index={2} {...ENTER}>
-          <Field
-            label="Descrição"
-            value={title}
-            onChangeText={setTitle}
-            autoCapitalize="sentences"
-            returnKeyType="done"
-            maxLength={60}
-          />
-        </Reveal>
-
         {/*
-          Antecipar, from the screen where money actually gets recorded.
+          Where the money goes and where it comes from, stated under the figure — always on screen.
 
-          Tapping one says "este lançamento é aquele compromisso" — it fills the figure, the nome and
-          a categoria, and on Salvar it retires that occurrence instead of adding a second copy of it
-          to the month. Tapping again lets it go, because the owner is allowed to change their mind
-          about what they just told the app.
-
-          Absent unless there is something outstanding in this direction, this month. A row that is
-          always there, mostly empty, is the furniture this app keeps arguing against.
-        */}
-        {/*
-          Present when there is something to choose, and also when the choice was already made for
-          us. A settlement sent in from the razão can name an occurrence further out than this
-          month, which `openNow` does not reach — without this the owner would meet a form filled
-          with a figure and no statement of what Salvar is about to retire.
-        */}
-        {openNow.length > 0 || settles ? (
-          <Reveal index={2} {...ENTER} rise={0}>
-            <Txt variant="micro" f="sansMedium" t="muted" style={styles.groupLabel}>
-              {direction === 'in' ? 'JÁ RECEBI' : 'JÁ PAGUEI'}
-            </Txt>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.chips}
-            >
-              {(settles && !openNow.some((o) => o.seriesId === settles.seriesId && o.date === settles.date)
-                ? [settles, ...openNow]
-                : openNow
-              ).map((o) => (
-                <Chip
-                  key={o.seriesId + '@' + o.date}
-                  label={`${o.title} · dia ${Number(o.date.slice(8))}`}
-                  selected={settles?.seriesId === o.seriesId && settles?.date === o.date}
-                  onPress={() =>
-                    setSettles((prev) => {
-                      if (prev?.seriesId === o.seriesId && prev.date === o.date) return null;
-                      setCents(o.amountCents);
-                      setTitle(o.title);
-                      setCategory(o.category);
-                      return o;
-                    })
-                  }
-                />
-              ))}
-            </ScrollView>
-            {settles ? (
-              <Txt variant="micro" t="faint" style={styles.settleNote}>
-                {`Lançado hoje. ${settles.title} some do dia ${Number(settles.date.slice(8))} e volta no mês que vem.`}
-              </Txt>
-            ) : null}
-          </Reveal>
-        ) : null}
-
-        {/*
-          When, not just what. Absent until now this screen assumed every lançamento happened the
-          instant it was typed — true for most, wrong for the receipt found at the bottom of a bag
-          three days later. `date` may only ever look backward: an entry is something that already
-          happened, and letting it point forward would make it indistinguishable from a projection.
-
-          Locked to hoje the moment a settlement is chosen above — see the effect that enforces it —
-          because `settleOccurrence` is dated today by contract, and a field the owner could still
-          turn would be lying about what Salvar is about to write.
+          Category and account used to sit below "Quando", under the fold of a keypad that takes the
+          bottom half of the panel, so the default account was chosen for the owner where they could
+          not see it (LANC-02). Two cells, each a reading first and a control second: the value is
+          always visible, and a tap unfolds the chip row right here instead of sending the owner
+          scrolling. A category nobody chose shows the one Salvar will write, in faint ink, so an
+          implicit "Outros" is never a surprise in the razão.
         */}
         <Reveal index={2} {...ENTER} rise={0}>
-          <Txt variant="micro" f="sansMedium" t="muted" style={styles.groupLabel}>
-            QUANDO
-          </Txt>
-          {!settles ? (
-            <DateSection date={date} today={today} onChange={setDate} />
-          ) : null}
-          <Field
-            label="Hora (opcional)"
-            value={time}
-            onChangeText={onTimeChange}
-            onBlur={() => setTimeTouched(true)}
-            error={timeTouched && !timeValid ? 'Use o formato HH:MM.' : null}
-            placeholder="--:--"
-            keyboardType="number-pad"
-            maxLength={5}
-            numeric
-            trailing={{ label: 'Agora', onPress: () => setTime(format(new Date(), 'HH:mm')) }}
-          />
-        </Reveal>
-
-        <Reveal index={3} {...ENTER} rise={0}>
-          <Txt variant="micro" f="sansMedium" t="muted" style={styles.groupLabel}>
-            CATEGORIA
-          </Txt>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chips}
-          >
-            {categoryOptions.map((c) => (
-              <Chip
-                key={c}
-                label={c}
-                selected={category === c}
-                onPress={() => setCategory((prev) => (prev === c ? null : c))}
-              />
-            ))}
-            <Chip
-              label="+ Nova categoria"
-              selected={addingCategory}
-              onPress={() => setAddingCategory((o) => !o)}
+          <View style={styles.summary}>
+            <SummaryCell
+              label="CATEGORIA"
+              value={category ?? fallbackCategory}
+              implicit={!category}
+              open={picker === 'category'}
+              onPress={() => setPicker((p) => (p === 'category' ? null : 'category'))}
             />
-          </ScrollView>
+            <View style={styles.summaryGap} />
+            <SummaryCell
+              label={onCard ? 'CARTÃO' : 'CONTA'}
+              value={chosen?.name ?? '—'}
+              open={picker === 'account'}
+              // One account is not a decision; the cell still says where the money lands.
+              onPress={
+                payFrom.length > 1
+                  ? () => setPicker((p) => (p === 'account' ? null : 'account'))
+                  : undefined
+              }
+            />
+          </View>
+
+          {picker === 'category' ? (
+            <Animated.View entering={FadeIn.duration(duration.state)} style={styles.pickerRow}>
+              <ChipRow
+                items={categoryOptions.map((c) => ({ key: c, label: c }))}
+                selected={category}
+                onPick={(c) => {
+                  setCategory((prev) => (prev === c ? null : c));
+                  setAddingCategory(false);
+                  setPicker(null);
+                }}
+                after={
+                  <Chip
+                    label="+ Nova categoria"
+                    selected={addingCategory}
+                    onPress={() => setAddingCategory((o) => !o)}
+                  />
+                }
+              />
+            </Animated.View>
+          ) : null}
 
           {/*
             One field, one name, done — the same restraint `domain/category` argues for: no icon to
@@ -570,7 +591,7 @@ export default function Lancar() {
             where dressing a category already lives; asking for them here would put that toll gate
             back in the one place this app has gone out of its way to remove it from.
           */}
-          {addingCategory ? (
+          {picker === 'category' && addingCategory ? (
             <Animated.View entering={FadeIn.duration(duration.state)}>
               <Field
                 label="Nova categoria"
@@ -580,8 +601,30 @@ export default function Lancar() {
                 returnKeyType="done"
                 maxLength={30}
                 autoFocus
-                onSubmitEditing={commitCategory}
-                trailing={{ label: 'Adicionar', onPress: commitCategory }}
+                onSubmitEditing={() => {
+                  commitCategory();
+                  setPicker(null);
+                }}
+                trailing={{
+                  label: 'Adicionar',
+                  onPress: () => {
+                    commitCategory();
+                    setPicker(null);
+                  },
+                }}
+              />
+            </Animated.View>
+          ) : null}
+
+          {picker === 'account' ? (
+            <Animated.View entering={FadeIn.duration(duration.state)} style={styles.pickerRow}>
+              <ChipRow
+                items={payFrom.map((a) => ({ key: a.id, label: a.name }))}
+                selected={chosen?.id ?? null}
+                onPick={(id) => {
+                  setAccountId(id);
+                  setPicker(null);
+                }}
               />
             </Animated.View>
           ) : null}
@@ -599,55 +642,129 @@ export default function Lancar() {
               </Txt>
             </Animated.View>
           ) : null}
+
+          {/*
+            The consequence, said where the choice is made.
+
+            Charging a card moves no balance today — `balanceToday`, the curve and the tape all skip
+            credit lines — so without this line the owner records a purchase, returns to the home
+            screen, sees the figure unchanged and concludes the app lost it. Only rendered when a card
+            is actually chosen, so it never becomes furniture.
+          */}
+          {onCard ? (
+            <Txt variant="micro" t="faint" style={styles.accountNote}>
+              {cycle
+                ? `Não sai do seu saldo agora. Entra na fatura que fecha em ${format(
+                    parseDay(cycle.closes),
+                    "d 'de' MMM",
+                    { locale: ptBR },
+                  )}.`
+                : 'Não sai do seu saldo agora. Entra na fatura deste cartão.'}
+            </Txt>
+          ) : null}
         </Reveal>
 
         {/*
-          The account, but only when there is a choice to make. One account is not a decision, and a
-          picker with a single option is a control that asks a question it already knows the answer
-          to. Cards are offered here — see the consequence note below — since Fase 6.2: charging a
-          card is still recording, it just does not move the balance today.
+          Optional, and the placeholder says what happens if it stays empty. Once there is a figure,
+          the keyboard's action key records the lançamento: with the system keyboard up, the keypad
+          and the CTA sit under it (the window pans rather than resizes), and a "done" that only
+          dropped focus left the owner one hidden step from finishing (LANC-07).
         */}
-        {payFrom.length > 1 ? (
-          <Reveal index={4} {...ENTER} rise={0}>
+        <Reveal index={2} {...ENTER}>
+          <Field
+            label="Descrição"
+            value={title}
+            onChangeText={setTitle}
+            placeholder={`Opcional · fica “${category ?? fallbackCategory}”`}
+            autoCapitalize="sentences"
+            returnKeyType={ready ? 'send' : 'done'}
+            onSubmitEditing={ready ? () => void save() : undefined}
+            maxLength={60}
+          />
+        </Reveal>
+
+        {/*
+          Antecipar, from the screen where money actually gets recorded.
+
+          Tapping one says "este lançamento é aquele compromisso" — it fills the figure, the nome and
+          a categoria, and on Salvar it retires that occurrence instead of adding a second copy of it
+          to the month. Tapping again lets it go, because the owner is allowed to change their mind
+          about what they just told the app.
+
+          Present when there is something outstanding in this direction this month, and also when the
+          choice was already made for us: a settlement sent in from the razão can name an occurrence
+          further out than this month, which `openNow` does not reach — without this the owner would
+          meet a form filled with a figure and no statement of what Salvar is about to retire.
+        */}
+        {settleItems.length > 0 ? (
+          <Reveal index={2} {...ENTER} rise={0}>
             <Txt variant="micro" f="sansMedium" t="muted" style={styles.groupLabel}>
-              CONTA
+              {direction === 'in' ? 'JÁ RECEBI' : 'JÁ PAGUEI'}
             </Txt>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.chips}
-            >
-              {payFrom.map((a) => (
-                <Chip
-                  key={a.id}
-                  label={a.name}
-                  selected={accountId === a.id}
-                  onPress={() => setAccountId(a.id)}
-                />
-              ))}
-            </ScrollView>
-
-            {/*
-              The consequence, said where the choice is made.
-
-              Charging a card moves no balance today — `balanceToday`, the curve and the tape all
-              skip credit lines — so without this line the owner records a purchase, returns to the
-              home screen, sees the figure unchanged and concludes the app lost it. The sentence is
-              only rendered when a card is actually chosen, so it never becomes furniture.
-            */}
-            {onCard ? (
-              <Txt variant="micro" t="faint" style={styles.accountNote}>
-                {cycle
-                  ? `Não sai do seu saldo agora. Entra na fatura que fecha em ${format(
-                      parseDay(cycle.closes),
-                      "d 'de' MMM",
-                      { locale: ptBR },
-                    )}.`
-                  : 'Não sai do seu saldo agora. Entra na fatura deste cartão.'}
+            <ChipRow
+              items={settleItems.map((o) => ({
+                key: settleKey(o),
+                label: `${o.title} · dia ${Number(o.date.slice(8))}`,
+              }))}
+              selected={settles ? settleKey(settles) : null}
+              onPick={(key) => {
+                const o = settleItems.find((x) => settleKey(x) === key);
+                if (!o) return;
+                setSettles((prev) => {
+                  if (prev && settleKey(prev) === key) return null;
+                  setCents(o.amountCents);
+                  setTitle(o.title);
+                  setCategory(o.category);
+                  return o;
+                });
+              }}
+            />
+            {settles ? (
+              <Txt variant="micro" t="faint" style={styles.settleNote}>
+                {/* A statement does not "come back next month" — the next one is a different bill,
+                    whatever the card collects — and paying less than it leaves the rest owed. */}
+                {isStatementSeries(settles.seriesId)
+                  ? cents < settles.amountCents
+                    ? `Lançado hoje. Os ${brl(settles.amountCents - cents)} que faltam continuam previstos no dia ${Number(settles.date.slice(8))}.`
+                    : `Lançado hoje. A fatura sai do dia ${Number(settles.date.slice(8))} e não conta como gasto.`
+                  : `Lançado hoje. ${settles.title} some do dia ${Number(settles.date.slice(8))} e volta no mês que vem.`}
               </Txt>
             ) : null}
           </Reveal>
         ) : null}
+
+        {/*
+          When, not just what. `date` may only ever look backward: an entry is something that already
+          happened, and letting it point forward would make it indistinguishable from a projection.
+
+          Locked to hoje the moment a settlement is chosen above — see the effect that enforces it —
+          because `settleOccurrence` is dated today by contract. The section then says "Hoje" rather
+          than going blank: an empty "Quando" read as a broken control (LANC-06).
+        */}
+        <Reveal index={3} {...ENTER} rise={0}>
+          <Txt variant="micro" f="sansMedium" t="muted" style={styles.groupLabel}>
+            QUANDO
+          </Txt>
+          {settles ? (
+            <Txt variant="body" t="muted">
+              {`Hoje, ${format(parseDay(today), "d 'de' MMMM", { locale: ptBR })}`}
+            </Txt>
+          ) : (
+            <DateSection date={date} today={today} onChange={setDate} />
+          )}
+          <Field
+            label="Hora (opcional)"
+            value={time}
+            onChangeText={onTimeChange}
+            onBlur={() => setTimeTouched(true)}
+            error={timeTouched && !timeValid ? 'Use o formato HH:MM.' : null}
+            placeholder="--:--"
+            keyboardType="number-pad"
+            maxLength={5}
+            numeric
+            trailing={{ label: 'Agora', onPress: () => setTime(format(new Date(), 'HH:mm')) }}
+          />
+        </Reveal>
       </KeyboardAwareScrollView>
 
       <Reveal index={5} {...ENTER} rise={0}>
@@ -657,13 +774,16 @@ export default function Lancar() {
             label={
               existing
                 ? 'Salvar'
-                : onCard
-                  ? direction === 'out'
-                    ? 'Lançar no cartão'
-                    : 'Lançar estorno'
-                  : direction === 'out'
-                    ? 'Lançar saída'
-                    : 'Lançar entrada'
+                : settles
+                  ? // The same words the rule's own screen uses for the same act.
+                    `${direction === 'in' ? 'Recebi' : 'Paguei'} — lançar hoje`
+                  : onCard
+                    ? direction === 'out'
+                      ? 'Lançar no cartão'
+                      : 'Lançar estorno'
+                    : direction === 'out'
+                      ? 'Lançar saída'
+                      : 'Lançar entrada'
             }
             onPress={() => void save()}
             loading={saving && !saved}
@@ -681,16 +801,72 @@ export default function Lancar() {
               onPress={() => void remove()}
               disabled={saving}
               style={styles.remove}
-              accessibilityLabel="Apagar lançamento"
+              accessibilityLabel={armed ? 'Toque de novo para excluir' : 'Excluir lançamento'}
             >
               <Txt variant="label" t={armed ? 'negative' : 'faint'} center>
-                {armed ? 'Toque de novo para apagar' : 'Apagar lançamento'}
+                {armed ? 'Toque de novo para excluir' : 'Excluir lançamento'}
               </Txt>
             </Press>
           ) : null}
         </View>
       </Reveal>
     </Screen>
+  );
+}
+
+/**
+ * One half of the summary row: a label, the value it currently holds, and — when there is a
+ * choice — a chevron that turns as the picker unfolds. The open cell carries the ink rule the
+ * segmented control uses for "this one", so the row says which picker the chips below belong to.
+ */
+function SummaryCell({
+  label,
+  value,
+  implicit = false,
+  open,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  implicit?: boolean;
+  open: boolean;
+  onPress?: () => void;
+}) {
+  const body = (
+    <>
+      <Txt variant="micro" f="sansMedium" t="muted" style={styles.summaryLabel}>
+        {label}
+      </Txt>
+      <View style={styles.summaryValue}>
+        <Txt variant="body" t={implicit ? 'faint' : 'ink'} numberOfLines={1} style={styles.shrink}>
+          {value}
+        </Txt>
+        {onPress ? (
+          <View style={{ transform: [{ rotate: open ? '-90deg' : '90deg' }] }}>
+            <ChevronRight size={14} tint={color.inkMuted} />
+          </View>
+        ) : null}
+      </View>
+      <View style={[styles.summaryRule, open ? styles.summaryRuleOn : null]} />
+    </>
+  );
+  if (!onPress) {
+    return (
+      <View style={styles.summaryCell} accessible accessibilityLabel={`${label}: ${value}`}>
+        {body}
+      </View>
+    );
+  }
+  return (
+    <Press
+      onPress={onPress}
+      scale={0.98}
+      outerStyle={styles.summaryCell}
+      accessibilityLabel={`${label}: ${value}${implicit ? ', padrão' : ''}. Toque para trocar.`}
+      accessibilityState={{ selected: open }}
+    >
+      {body}
+    </Press>
   );
 }
 
@@ -745,31 +921,6 @@ function Segmented({
   );
 }
 
-function Chip({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Press
-      onPress={onPress}
-      scale={0.95}
-      hitSlop={4}
-      style={[styles.chip, selected ? styles.chipOn : null]}
-      accessibilityLabel={label}
-      accessibilityState={{ selected }}
-    >
-      <Txt variant="label" f={selected ? 'sansMedium' : 'sans'} t={selected ? 'ink' : 'muted'}>
-        {label}
-      </Txt>
-    </Press>
-  );
-}
-
 const WEEKDAYS = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB', 'DOM'];
 
 /**
@@ -816,22 +967,25 @@ function DateSection({
 
   return (
     <View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chips}
-      >
-        <Chip label="Hoje" selected={date === today} onPress={() => pick(today)} />
-        <Chip label="Ontem" selected={date === yesterday} onPress={() => pick(yesterday)} />
-        <Chip
-          label={isOther ? format(parseDay(date), "d 'de' MMM", { locale: ptBR }) : 'Escolher data'}
-          selected={isOther}
-          onPress={() => {
+      <ChipRow
+        items={[
+          { key: 'today', label: 'Hoje' },
+          { key: 'yesterday', label: 'Ontem' },
+          {
+            key: 'other',
+            label: isOther ? format(parseDay(date), "d 'de' MMM", { locale: ptBR }) : 'Escolher data',
+          },
+        ]}
+        selected={date === today ? 'today' : date === yesterday ? 'yesterday' : 'other'}
+        onPick={(key) => {
+          if (key === 'today') pick(today);
+          else if (key === 'yesterday') pick(yesterday);
+          else {
             setAnchor(dayKey(startOfMonth(parseDay(date))));
             setOpen((o) => !o);
-          }}
-        />
-      </ScrollView>
+          }
+        }}
+      />
 
       {open ? (
         <Animated.View entering={FadeIn.duration(duration.state)} style={styles.dateGrid}>
@@ -845,24 +999,39 @@ function DateSection({
             ))}
           </View>
 
+          {/*
+            Two kinds of cell that are not choices, drawn two different ways (LANC-08). A day of the
+            neighbouring month is not part of this month at all, so it is left empty — it used to be
+            hidden with an opacity the press animation overwrote, and 28-30 de setembro rendered
+            exactly like the disabled days after today. A future day of this month *is* this month,
+            just not yet; it stays, faint and struck through, so the grid still reads as a calendar.
+          */}
           <View style={styles.dayGrid}>
             {grid.cells.map((cell) => {
-              const inside = cell >= grid.from && cell <= grid.to && cell <= today;
+              const inMonth = cell >= grid.from && cell <= grid.to;
+              if (!inMonth) return <View key={cell} style={styles.dayHit} />;
+              const future = cell > today;
               const current = cell === date;
               return (
                 <Press
                   key={cell}
                   onPress={() => pick(cell)}
-                  disabled={!inside}
+                  disabled={future}
                   haptic="light"
                   scale={0.96}
                   dim={0.7}
                   outerStyle={styles.dayHit}
-                  style={[styles.day, current ? styles.daySelected : null, !inside ? styles.dayOutside : null]}
+                  style={[styles.day, current ? styles.daySelected : null]}
                   accessibilityLabel={format(parseDay(cell), "d 'de' MMMM", { locale: ptBR })}
-                  accessibilityState={{ selected: current, disabled: !inside }}
+                  accessibilityState={{ selected: current, disabled: future }}
                 >
-                  <Txt variant="label" f={current ? 'monoMedium' : 'mono'} t={inside ? 'ink' : 'faint'} tabular>
+                  <Txt
+                    variant="label"
+                    f={current ? 'monoMedium' : 'mono'}
+                    t={current ? 'onInk' : future ? 'faint' : 'ink'}
+                    tabular
+                    style={future ? styles.dayFuture : null}
+                  >
                     {format(parseDay(cell), 'd')}
                   </Txt>
                 </Press>
@@ -898,7 +1067,7 @@ function Keypad({
           hitSlop={0}
           outerStyle={styles.keyHit}
           style={styles.key}
-          accessibilityLabel={k === 'del' ? 'Apagar' : k}
+          accessibilityLabel={k === 'del' ? 'Tirar o último dígito' : k}
         >
           {k === 'del' ? (
             <Backspace />
@@ -923,8 +1092,8 @@ const styles = StyleSheet.create({
   dayGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingTop: space.xs },
   dayHit: { width: '14.2857%' },
   day: { minHeight: 48, alignItems: 'center', justifyContent: 'center', marginVertical: 1 },
-  daySelected: { backgroundColor: color.surface },
-  dayOutside: { opacity: 0 },
+  daySelected: { backgroundColor: color.ink, borderRadius: radius.md },
+  dayFuture: { textDecorationLine: 'line-through', opacity: 0.6 },
   capWarn: { paddingTop: space.md },
   // The warning hangs off a rule of its own so it reads as a consequence of the choice above it
   // rather than as a caption belonging to the chip row.
@@ -935,8 +1104,11 @@ const styles = StyleSheet.create({
     backgroundColor: color.negative,
     opacity: 0.6,
   },
-  flex: { flex: 1 },
-  scroll: { paddingTop: space.md, paddingBottom: space.lg, flexGrow: 1 },
+  /* The scroll spans the panel edge to edge and pads its content back to the gutter. A vertical
+     ScrollView clips to its own bounds, so a gutter-wide one cut every chip row at the gutter no
+     matter how far the row itself bled; this is what lets them run on into the curve. */
+  flex: { flex: 1, marginHorizontal: -space.gutter },
+  scroll: { paddingTop: space.md, paddingBottom: space.lg, paddingHorizontal: space.gutter, flexGrow: 1 },
 
   segmented: { flexDirection: 'row' },
   /* Half the row belongs to the touch target; the label only centres itself inside it. */
@@ -955,16 +1127,25 @@ const styles = StyleSheet.create({
 
   groupLabel: { letterSpacing: 0.8, paddingTop: space.xl, paddingBottom: space.md },
   accountNote: { paddingTop: space.md },
-  chips: { flexDirection: 'row', gap: space.sm, paddingRight: space.gutter },
-  chip: {
-    minHeight: 0,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.hairline,
+
+  editSub: { paddingTop: space.xs, paddingBottom: space.lg },
+
+  summary: { flexDirection: 'row' },
+  summaryGap: { width: space.lg },
+  summaryCell: { flex: 1, minHeight: 64, justifyContent: 'flex-end' },
+  summaryLabel: { letterSpacing: 0.8 },
+  summaryValue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingTop: space.xs,
+    paddingBottom: space.sm,
   },
-  chipOn: { borderColor: color.hairlineStrong, backgroundColor: color.surface },
+  shrink: { flexShrink: 1 },
+  /* The same rule-as-selection the segmented control draws, at hairline weight until it is open. */
+  summaryRule: { height: 1, backgroundColor: color.hairline },
+  summaryRuleOn: { height: 2, marginTop: -1, backgroundColor: color.ink },
+  pickerRow: { paddingTop: space.md },
 
   keypad: {
     flexDirection: 'row',

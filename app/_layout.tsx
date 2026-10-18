@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { router, Stack } from 'expo-router';
 import * as Notifications from 'expo-notifications';
@@ -18,8 +19,11 @@ import {
   GeistMono_500Medium,
   GeistMono_600SemiBold,
 } from '@expo-google-fonts/geist-mono';
+import { BlurTargetView } from 'expo-blur';
 import { SnackbarHost } from '@/ui/Snackbar';
+import { TabBar } from '@/ui/TabBar';
 import { useSession } from '@/lib/auth/session';
+import { LockGate } from '@/lib/auth/LockGate';
 import { color } from '@/theme/tokens';
 
 void SplashScreen.preventAutoHideAsync();
@@ -34,6 +38,8 @@ export default function RootLayout() {
     GeistMono_500Medium,
     GeistMono_600SemiBold,
   });
+
+  const page = useRef<View>(null);
 
   const hydrate = useSession((s) => s.hydrate);
   const hydrated = useSession((s) => s.hydrated);
@@ -100,55 +106,70 @@ export default function RootLayout() {
             `freezeOnBlur` stops the screen underneath from re-rendering during the push, which is
             the cheapest frame we can buy back on the one transition the user actually watches.
           */}
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: color.bg },
-              animation: 'ios_from_right',
-              freezeOnBlur: true,
-            }}
-          >
-            <Stack.Screen name="index" options={{ animation: 'none' }} />
-            {/*
-              The tabs carry no native animation at all, and that is the point.
+          {/*
+            The tab bar's glass blurs whatever is under it, and on Android that means the views it
+            samples have to live inside a `BlurTargetView` the bar itself is not part of. So the
+            whole stack is the target, and the one bar sits beside it — above every screen, mounted
+            once, which is also what lets its lens move on the tap instead of after the next
+            screen has mounted.
+          */}
+          <View style={{ flex: 1 }}>
+            <BlurTargetView ref={page} style={{ flex: 1, backgroundColor: color.bg }}>
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: color.bg },
+                  animation: 'ios_from_right',
+                  freezeOnBlur: true,
+                }}
+              >
+                <Stack.Screen name="index" options={{ animation: 'none' }} />
+                {/*
+                  The tabs carry no native animation at all, and that is the point.
 
-              A tab change used to be a native fade *and* a `Reveal` fade — two curves driving the
-              same pixel's opacity over the same moment, which this project has already learned reads
-              as a stutter rather than as emphasis. Worse, the native fade is short and unstretchable
-              on Android, so it set the tempo of the whole thing: 200ms of dissolve with a 12dp rise
-              behind it, which is precisely what "seco" describes.
+                  A tab change used to be a native fade *and* a `Reveal` fade — two curves driving the
+                  same pixel's opacity over the same moment, which this project has already learned reads
+                  as a stutter rather than as emphasis. Worse, the native fade is short and unstretchable
+                  on Android, so it set the tempo of the whole thing: 200ms of dissolve with a 12dp rise
+                  behind it, which is precisely what "seco" describes.
 
-              With it gone, the bar is the element that stays — it appears at once, in the same place,
-              because it is the same bar — and the content is the element that moves, travelling in
-              from the side the owner came from over the better part of a second. One curve per
-              pixel, and the transition belongs to the content, where Fase 1.8 established it has to
-              live on Android.
+                  With it gone, the bar is the element that stays — it appears at once, in the same place,
+                  because it is the same bar — and the content is the element that moves, travelling in
+                  from the side the owner came from over the better part of a second. One curve per
+                  pixel, and the transition belongs to the content, where Fase 1.8 established it has to
+                  live on Android.
 
-              They still replace rather than push, so two tabs can never stack on each other.
-            */}
-            <Stack.Screen name="home" options={{ animation: 'none' }} />
-            <Stack.Screen name="razao" options={{ animation: 'none' }} />
-            <Stack.Screen name="analise" options={{ animation: 'none' }} />
-            {/* Not a tab. Pushed from ajustes, so it slides laterally like any sibling in a flow. */}
-            <Stack.Screen name="contas" />
-            <Stack.Screen name="calendario" />
-            <Stack.Screen name="notificacoes" />
-            <Stack.Screen name="recorrencias" />
-            <Stack.Screen name="tetos" />
-            <Stack.Screen name="categorias" />
-            <Stack.Screen name="recorrencia" />
-            <Stack.Screen name="divida/[token]" options={{ animation: 'fade' }} />
-            <Stack.Screen name="ajustes" options={{ animation: 'none' }} />
-            {/* The door. It replaces the entry route rather than sitting on top of it, so there is
-                no screen behind it to reach by dismissing. */}
-            <Stack.Screen name="desbloquear" options={{ animation: 'fade', gestureEnabled: false }} />
-            {/*
-              Recording rises from the bar it was launched from rather than sliding in from the
-              side. Lateral movement is this app's grammar for "a sibling screen"; capture is not a
-              sibling of the home screen, it is a surface the home screen raises.
-            */}
-            <Stack.Screen name="lancar" options={{ animation: 'slide_from_bottom' }} />
-          </Stack>
+                  They still replace rather than push, so two tabs can never stack on each other.
+                */}
+                <Stack.Screen name="home" options={{ animation: 'none' }} />
+                <Stack.Screen name="razao" options={{ animation: 'none' }} />
+                <Stack.Screen name="analise" options={{ animation: 'none' }} />
+                {/* Not a tab. Pushed from ajustes, so it slides laterally like any sibling in a flow. */}
+                <Stack.Screen name="contas" />
+                <Stack.Screen name="calendario" />
+                <Stack.Screen name="notificacoes" />
+                <Stack.Screen name="recorrencias" />
+                <Stack.Screen name="tetos" />
+                <Stack.Screen name="categorias" />
+                <Stack.Screen name="recorrencia" />
+                <Stack.Screen name="otto" />
+                <Stack.Screen name="divida/[token]" options={{ animation: 'fade' }} />
+                <Stack.Screen name="ajustes" options={{ animation: 'none' }} />
+                {/* The door. It replaces the entry route rather than sitting on top of it, so there is
+                    no screen behind it to reach by dismissing. */}
+                <Stack.Screen name="desbloquear" options={{ animation: 'fade', gestureEnabled: false }} />
+                {/*
+                  Recording rises from the bar it was launched from rather than sliding in from the
+                  side. Lateral movement is this app's grammar for "a sibling screen"; capture is not a
+                  sibling of the home screen, it is a surface the home screen raises.
+                */}
+                <Stack.Screen name="lancar" options={{ animation: 'slide_from_bottom' }} />
+              </Stack>
+            </BlurTargetView>
+            <TabBar blurTarget={page} />
+            {/* Last, so its curtain covers the bar too while the trinco is shut. */}
+            <LockGate />
+          </View>
         </SnackbarHost>
       </SafeAreaProvider>
     </GestureHandlerRootView>

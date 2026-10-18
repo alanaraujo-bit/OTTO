@@ -37,7 +37,7 @@ is a defect.
 | `hairlineStrong` | `#333945` | focused rule |
 | `ink` | `#F2F4F7` | primary text, filled CTA ground |
 | `inkMuted` | `#9BA1AC` | secondary text |
-| `inkFaint` | `#5E656F` | labels, units, tertiary |
+| `inkFaint` | `#737B88` | labels, units, tertiary |
 | `positive` | `#3FBF74` | inflow / paid / ahead |
 | `negative` | `#E5484D` | outflow / overdue |
 | `warning` | `#E2A03F` | due soon |
@@ -79,7 +79,11 @@ The rules that keep this from becoming a brand palette:
 ## Type
 One family pair, self-hosted via `@expo-google-fonts`.
 - **Geist Sans** — UI, labels, copy. Weights 400 / 500 / 600.
-- **Geist Mono** — every number, everywhere, always tabular. Also the wordmark.
+- **Geist Mono** — every number, everywhere, always tabular. Also the wordmark. Numbers only: words,
+  labels and dates written as words ("outubro de 2026", "segunda") are set in Sans.
+
+A flow carries its direction in a character as well as a colour: an inflow is written "+R$ 1.600",
+an outflow plain "R$ 800" in `negative`. A minus is kept for a balance below zero.
 
 Scale (sp, follows system font scaling):
 `display 44 / title 26 / heading 19 / body 15 / label 13 / micro 11`
@@ -104,3 +108,15 @@ Category colour outside the five tokens above, or any of them used for something
 category a mark belongs to.
 Progress rings and sparklines standing in for content. Neon-on-black accent (the 2025 AI-app tell).
 Any green or red that is not describing money.
+
+### The one red that is not money (added 2026-10-18)
+`negative` may also mark a **destructive action label** ("excluir", "confirmar" on a delete) or a
+**validation error** under a field. Nothing else: not a status, not a strength meter, not a heading,
+not decoration. Both exceptions are warnings about losing something, which is the same news red
+carries when it is money. `positive` has no exception.
+
+### The one glass surface (added 2026-10-18)
+The floating tab bar is glass, and it is the only glass in the app. It is functional, not decoration:
+the bar floats over scrolling content, and the blur is what keeps that content legible as *behind*
+the controls instead of colliding with them. The tint is heavy enough that no money or category
+colour passes through at strength. No other surface may blur.

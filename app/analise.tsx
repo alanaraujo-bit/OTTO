@@ -8,7 +8,7 @@ import { Reveal } from '@/ui/Reveal';
 import { Wordmark } from '@/ui/Wordmark';
 import { Amount } from '@/ui/Amount';
 import { Press } from '@/ui/Press';
-import { TabBar } from '@/ui/TabBar';
+import { useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { PaceBars, type PaceDatum } from '@/ui/chart/PaceBars';
 import { Txt } from '@/theme/text';
@@ -18,6 +18,7 @@ import { capReadings } from '@/domain/cap';
 import { dayKey, parseDay } from '@/domain/projection';
 import { categoryPace, spendPace, MIN_BASIS } from '@/domain/analysis';
 import { brlShort } from '@/domain/money';
+import { lookFor } from '@/domain/category';
 
 /**
  * "Isso é normal?"
@@ -48,6 +49,7 @@ export default function Analise() {
 }
 
 function AnaliseBody() {
+  const clearance = useTabBarClearance();
   // One arrival for all four tabs, carrying the direction of the move that produced it.
   const ENTER = useTabEntrance();
 
@@ -57,6 +59,7 @@ function AnaliseBody() {
   const entries = useLedger((s) => s.entries);
   const series = useLedger((s) => s.series);
   const caps = useLedger((s) => s.caps);
+  const storedCategories = useLedger((s) => s.categories);
 
   useEffect(() => {
     void load();
@@ -81,22 +84,50 @@ function AnaliseBody() {
         past: m.complete,
       }));
 
+    /*
+     * The month the ledger started in, when it started after the 1st, is left out of the chart on
+     * purpose (see `covered`) — but leaving it out *silently* read as the app having lost September.
+     * So the screen names the month it dropped and why, in one line under the chart.
+     */
+    const first = entries.reduce<string | null>(
+      (min, e) => (min === null || e.date < min ? e.date : min),
+      null,
+    );
+    const dropped =
+      first && first.slice(8) !== '01'
+        ? pace.history.find((m) => !m.covered && m.month === first.slice(0, 7))
+        : undefined;
+
+    const month = format(parseDay(today), 'MMMM', { locale: ptBR });
+
     return {
       pace,
       months,
-      categories: cats
-        .slice(0, 7)
-        .map((c) => ({ label: c.category, cents: c.cents, usual: c.usual })),
+      // The same window stated in words, so this figure cannot be mistaken for the Home's rolling
+      // thirty days — the two can land on the same number and still be different claims.
+      period:
+        pace.day === 1 ? `gasto hoje, 1º de ${month}` : `gasto de 1 a ${pace.day} de ${month}`,
+      dropped: dropped && first
+        ? `${cap1(format(parseDay(dropped.from), 'MMMM', { locale: ptBR }))} fica de fora: seu razão começa em ${Number(first.slice(8))} de ${format(parseDay(first), 'MMMM', { locale: ptBR })}, e um mês visto pela metade não serve de comparação.`
+        : null,
+      // Each category wears the glyph and hue it wears in the Home's ring, so "Transporte" is
+      // recognisably the same thing on both screens before its name is read.
+      categories: cats.slice(0, 7).map((c) => ({
+        label: c.category,
+        cents: c.cents,
+        usual: c.usual,
+        ...lookFor(c.category, storedCategories),
+      })),
       enough: pace.usual !== null,
       caps: capReadings(caps, entries, series, today),
     };
-  }, [ready, error, entries, series, caps, today]);
+  }, [ready, error, entries, series, caps, storedCategories, today]);
 
   return (
     <>
       <ScrollView
         style={styles.flex}
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingBottom: clearance }]}
         showsVerticalScrollIndicator={false}
       >
         <Reveal index={0} {...ENTER.head}>
@@ -135,9 +166,11 @@ function AnaliseBody() {
             */}
             <Reveal index={1} {...ENTER.body}>
               <View style={styles.hero}>
-                <Amount cents={-view.pace.spent} size="hero" tone="ink" />
+                {/* A magnitude. The label already says it went out; a minus sign repeated it and made
+                    the figure read as a balance gone negative. */}
+                <Amount cents={view.pace.spent} size="hero" tone="ink" />
                 <Txt variant="label" t="muted" style={styles.heroLabel}>
-                  saiu até hoje, dia {view.pace.day}
+                  {view.period}
                 </Txt>
               </View>
             </Reveal>
@@ -208,7 +241,21 @@ function AnaliseBody() {
                   A parte forte é o mesmo trecho em todos os meses. A fraca é o resto do mês, que
                   aconteceu mas está fora da comparação.
                   {view.enough ? ' O traço é o seu normal.' : ''}
+                  {view.dropped ? ' ' + view.dropped : ''}
                 </Txt>
+              </View>
+            ) : null}
+
+            {view.categories.length > 0 ? (
+              <View>
+                <Section
+                  label="por categoria"
+                  aside={view.enough ? 'traço = o seu normal' : undefined}
+                />
+                <PaceBars
+                  data={view.categories}
+                  delay={620}
+                />
               </View>
             ) : null}
 
@@ -221,7 +268,9 @@ function AnaliseBody() {
               offering to set one, which is a smaller promise than an empty section with a heading.
             */}
             <View>
-              <Section label="tetos" aside={view.caps.length > 0 ? 'o que resta por dia' : undefined} />
+              {/* The aside names the column on the right, which is what it actually holds. "O que
+                  resta por dia" headed rows where half the captions said a ceiling had broken. */}
+              <Section label="tetos" aside={view.caps.length > 0 ? 'gasto / teto' : undefined} />
               <Press
                 onPress={() => router.push('/tetos')}
                 style={styles.capsHit}
@@ -243,11 +292,13 @@ function AnaliseBody() {
                           t={c.leftCents <= 0 || c.burstsOn ? 'negative' : 'faint'}
                           numberOfLines={1}
                         >
-                          {c.leftCents <= 0
-                            ? `${brlShort(-c.leftCents)} acima do teto`
-                            : c.burstsOn
-                              ? `no ritmo, estoura dia ${Number(c.burstsOn.slice(8))}`
-                              : `${brlShort(c.perDayCents)} por dia nos ${c.daysLeft} dias que faltam`}
+                          {c.leftCents < 0
+                            ? `passou do teto em ${brlShort(-c.leftCents)}`
+                            : c.leftCents === 0
+                              ? 'chegou ao teto'
+                              : c.burstsOn
+                                ? `no ritmo, passa do teto dia ${Number(c.burstsOn.slice(8))}`
+                                : `${brlShort(c.perDayCents)} por dia nos ${c.daysLeft} dias que faltam`}
                         </Txt>
                       </View>
                       <Txt variant="label" f="monoMedium" t="muted" tabular numberOfLines={1}>
@@ -259,29 +310,14 @@ function AnaliseBody() {
               </Press>
             </View>
 
-            {view.categories.length > 0 ? (
-              <View>
-                <Section
-                  label="por categoria"
-                  aside={view.enough ? 'traço = o seu normal' : undefined}
-                />
-                <PaceBars
-                  data={view.categories}
-                  delay={620}
-                />
-              </View>
-            ) : null}
           </>
         ) : null}
       </ScrollView>
-
-      <TabBar
-        active="stats"
-        onCapture={() => router.push('/lancar')}
-      />
     </>
   );
 }
+
+const cap1 = (w: string) => w.charAt(0).toLocaleUpperCase('pt-BR') + w.slice(1);
 
 /** A group boundary, drawn the way this world draws one: a rule, then the label under it. */
 function Section({ label, aside }: { label: string; aside?: string }) {

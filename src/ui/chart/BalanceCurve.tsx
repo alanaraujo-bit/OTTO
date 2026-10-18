@@ -295,7 +295,9 @@ const styles = StyleSheet.create({
   veil: { overflow: 'hidden' },
   endLabel: { position: 'absolute', width: 96, alignItems: 'flex-end' },
   endCaption: { textAlign: 'right' },
-  todayTick: { position: 'absolute', width: 52, alignItems: 'center' },
+  // Same height and centring as the axis row, so "hoje 18" sits on the baseline "01" and "31" sit
+  // on rather than a few pixels above it.
+  todayTick: { position: 'absolute', width: 52, height: AXIS_H, alignItems: 'center', justifyContent: 'center' },
   axis: {
     position: 'absolute',
     left: 0,

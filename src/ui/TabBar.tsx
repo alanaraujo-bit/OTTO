@@ -1,9 +1,14 @@
-import { useEffect, type ComponentType } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState, type ComponentType, type RefObject } from 'react';
+import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
+import { router, usePathname } from 'expo-router';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
+  withSequence,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { Txt } from '@/theme/text';
@@ -21,102 +26,262 @@ interface Slot {
   icon: ComponentType<{ size?: number; tint?: string }>;
 }
 
-const LEFT: Slot[] = [
-  { key: 'home', label: 'início', icon: NavHome },
-  { key: 'ledger', label: 'razão', icon: NavLedger },
-];
+const SLOTS: Record<TabKey, Slot> = {
+  home: { key: 'home', label: 'início', icon: NavHome },
+  ledger: { key: 'ledger', label: 'razão', icon: NavLedger },
+  stats: { key: 'stats', label: 'análise', icon: NavStats },
+  settings: { key: 'settings', label: 'ajustes', icon: NavSettings },
+};
 
-const RIGHT: Slot[] = [
-  { key: 'stats', label: 'análise', icon: NavStats },
-  { key: 'settings', label: 'ajustes', icon: NavSettings },
-];
+/** Which routes are tabs. Any other route — a pushed screen, the door, auth — has no bar. */
+const ROUTE_TAB: Record<string, TabKey> = {
+  '/home': 'home',
+  '/razao': 'ledger',
+  '/analise': 'stats',
+  '/ajustes': 'settings',
+};
 
-/** Where each tab sits across the five-slot row, as a fraction of the bar's width. */
-const COLUMN: Record<TabKey, number> = { home: 0, ledger: 1, stats: 3, settings: 4 };
-const SLOTS = 5;
+const BAR = 64;
+/** The glass between the capsule's rim and the lens, so the lens reads as sitting *in* the bar. */
+const INSET = 5;
+const GAP = space.md;
+/** Inactive glyphs and labels: ink, dimmed — muted grey fell to ~3:1 over a bright chart under the glass. */
+const IDLE = 'rgba(242, 244, 247, 0.68)';
 
 /**
- * The instrument's controls.
+ * How far from the bottom edge the bar floats.
  *
- * Recording is the product — PRODUCT.md puts time-to-record above everything else — so it is not one
- * of five equal destinations. It is the actuator: a filled ink disc that sits proud of the panel and
- * breaks the bar's top rule, which is the one place in this world where something is allowed to
- * interrupt a hairline. Everything else in the bar is the same open stroke at the same weight.
- *
- * **The bar is the thing that stays.** Every screen mounts its own copy, so it is the one element
- * that does not change while the content underneath it does — and the marker is what makes that
- * legible. There is a single marker for the whole bar rather than one per item, and on arrival it
- * **travels from the tab the owner just left to the one they chose**. A marker that simply appears
- * in its new place says "you are here"; one that slides says "you came from there", which is the
- * fact the transition is actually about.
- *
- * Navigation lives here rather than in four screens repeating the same switch. The bar knows the
- * order of its own slots, which is what makes a tab change have a direction at all.
+ * The system navigation bar is hidden, so the bottom inset is zero — but the gesture strip that
+ * brings it back is still there, and a drag that starts on a control inside it goes home instead.
+ * The floor keeps the whole capsule above that strip.
  */
-export function TabBar({ active, onCapture }: { active: TabKey; onCapture: () => void }) {
+function useLift() {
   const insets = useSafeAreaInsets();
+  return Math.max(insets.bottom, space.xl) + space.sm;
+}
+
+/**
+ * How much room a scrolling tab screen must leave under its last row.
+ *
+ * The bar floats over the content instead of sitting below it, so without this the end of every
+ * list would live permanently under glass — readable through it, never tappable.
+ */
+export function useTabBarClearance() {
+  return BAR + useLift() + space.lg;
+}
+
+/**
+ * The instrument's controls, as a pane of glass floating over the page.
+ *
+ * **There is one bar, and it outlives the tabs.** It is mounted once at the root, above the stack,
+ * rather than once per screen. A bar per screen could only move its lens after the next screen had
+ * mounted — most of a second after the tap, with the lens appearing already halfway there. A bar
+ * that stays can answer the finger: the lens leaves the moment the tab is chosen, and the content
+ * catches up underneath it. It fades away whenever the route is not a tab.
+ *
+ * Two pieces, the way the platform's own floating bars are built: a capsule holding the four
+ * destinations, and beside it the actuator. Recording is the product — PRODUCT.md puts
+ * time-to-record above everything else — so it is not a fifth destination squeezed into the row. It
+ * is the one filled ink object on the screen, under the right thumb, and it never moves.
+ *
+ * **The glass is real.** On Android the blur samples the app through the `BlurTargetView` the root
+ * layout wraps the stack in, so a chart scrolling underneath shows through, softened. The dark tint
+ * over it is heavy on purpose: this world's colour means money, and glass that let a red figure or a
+ * category arc pass at strength would leak that colour into the controls. Where the platform cannot
+ * blur (Android 11 and below) the tint alone carries it.
+ *
+ * **The rim is lit.** DESIGN.md treats the panel's curve as a light source; the bar gets the same
+ * treatment at small scale — a bright hairline along its top edge, the way a rounded edge catches
+ * light from above.
+ *
+ * **The lens travels** from the tab the owner left to the one they chose, stretching on the way and
+ * settling back into shape — briefly, because a control that keeps wobbling after the finger has
+ * gone reads as a toy, not as glass.
+ */
+export function TabBar({ blurTarget }: { blurTarget?: RefObject<View | null> }) {
+  const lift = useLift();
+  const pathname = usePathname();
+  const routeTab = ROUTE_TAB[pathname];
+  const current = useNav((s) => s.current);
   const go = useNav((s) => s.go);
-  const from = useNav((s) => s.from);
   const reduced = useReducedMotion();
+  const [slotWidth, setSlotWidth] = useState(0);
 
-  const target = COLUMN[active];
-  // Starts where the owner was, so the very first frame of the new screen already shows the movement
-  // that brought them here. A cold start has no previous tab and so has nothing to travel from.
-  const at = useSharedValue(from ? COLUMN[from] : target);
-
+  // `go` moves `current` before it navigates, which is what lets the lens leave on the tap. A route
+  // reached any other way — the cold-start redirect, a deep link — only tells us through the path,
+  // so the store is brought in line with it here.
   useEffect(() => {
-    at.value = reduced
-      ? target
-      : withTiming(target, { duration: duration.route, easing: ease.out });
-  }, [target, reduced, at]);
+    if (routeTab && routeTab !== useNav.getState().current) {
+      useNav.setState({ current: routeTab, from: null, direction: 0 });
+    }
+  }, [routeTab]);
 
-  const marker = useAnimatedStyle(() => ({
-    left: `${((at.value + 0.5) / SLOTS) * 100}%`,
+  const visible = routeTab != null;
+  const shown = useSharedValue(visible ? 1 : 0);
+  useEffect(() => {
+    shown.value = withTiming(visible ? 1 : 0, {
+      duration: visible ? duration.state : duration.exit,
+      easing: ease.out,
+    });
+  }, [visible, shown]);
+
+  const target = TABS.indexOf(current);
+  const at = useSharedValue(target);
+  const stretch = useSharedValue(0);
+  const aimed = useRef(target);
+
+  // Shared values animate on the UI thread, so a lens sent on its way here keeps moving while the
+  // JS thread is busy building the next screen — which takes most of a second for the razão. Sending
+  // it from a React effect instead would wait for that render to finish first.
+  const moveTo = (index: number) => {
+    if (index === aimed.current) return;
+    aimed.current = index;
+    if (reduced) {
+      at.value = index;
+      return;
+    }
+    at.value = withSpring(index, { damping: 26, stiffness: 320, mass: 0.8 });
+    stretch.value = withSequence(
+      withTiming(1, { duration: 90, easing: ease.out }),
+      withSpring(0, { damping: 22, stiffness: 400, mass: 0.7 }),
+    );
+  };
+
+  // A tab reached without a tap on the bar still moves the lens.
+  useEffect(() => moveTo(target));
+
+  // The navigation waits one frame. Writes to shared values reach the UI thread when the JS task
+  // that made them ends, and the next screen's render is one long task — so without the yield the
+  // lens would sit still until that render finished, which is the very delay it exists to hide.
+  const select = (key: TabKey) => {
+    moveTo(TABS.indexOf(key));
+    requestAnimationFrame(() => go(key));
+  };
+
+  const dock = useAnimatedStyle(() => ({
+    opacity: shown.value,
+    transform: [{ translateY: reduced ? 0 : (1 - shown.value) * 24 }],
   }));
 
+  const fade = useAnimatedStyle(() => ({ opacity: shown.value }));
+
+  const lens = useAnimatedStyle(() => ({
+    width: slotWidth,
+    transform: [
+      { translateX: at.value * slotWidth },
+      { scaleX: 1 + stretch.value * 0.12 },
+      { scaleY: 1 - stretch.value * 0.05 },
+    ],
+  }));
+
+  const onCapsule = (e: LayoutChangeEvent) => {
+    const w = (e.nativeEvent.layout.width - INSET * 2) / TABS.length;
+    setSlotWidth((prev) => (prev === w ? prev : w));
+  };
+
   return (
-    <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, space.sm) }]}>
-      <View style={styles.rule} />
+    <>
+      {/* Content passing through the gap beside the capsule is cut sharp by both edges; a short fade
+          at the foot of the screen lets it go soft instead. */}
+      <Animated.View
+        style={[styles.fade, { height: BAR + lift + space.xl }, fade]}
+        pointerEvents="none"
+      >
+        <LinearGradient colors={['rgba(8,9,11,0)', 'rgba(8,9,11,0.55)']} style={StyleSheet.absoluteFill} />
+      </Animated.View>
 
-      {/* One marker for the bar, positioned over the row rather than parented to a slot — a marker
-          inside an item could never travel to a different one. */}
-      <View style={styles.markerRail} pointerEvents="none">
-        <Animated.View style={[styles.marker, marker]} />
-      </View>
+      <Animated.View
+        style={[styles.dock, { bottom: lift }, dock]}
+        pointerEvents={visible ? 'box-none' : 'none'}
+      >
+        <View style={styles.capsuleShadow}>
+          <View style={styles.capsule} onLayout={onCapsule}>
+            <Glass blurTarget={visible ? blurTarget : undefined} />
 
-      <View style={styles.row}>
-        {LEFT.map((s) => (
-          <Item key={s.key} slot={s} active={active === s.key} onSelect={go} />
-        ))}
+            {/* Positioned over the row rather than parented to a slot — a lens inside an item could
+                never travel to a different one. Hidden until the row has a width to divide. */}
+            {slotWidth > 0 ? (
+              <Animated.View style={[styles.lens, lens]} pointerEvents="none">
+                <LinearGradient
+                  colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.03)']}
+                  style={StyleSheet.absoluteFill}
+                />
+                <Rim />
+              </Animated.View>
+            ) : null}
 
-        <View style={styles.centre}>
-          <Press
-            onPress={onCapture}
-            haptic="light"
-            scale={0.93}
-            dim={0.82}
-            outerStyle={styles.actuatorLift}
-            style={styles.actuatorHit}
-            accessibilityLabel="Lançar"
-          >
-            {/* The ring is the app ground, so the bar's rule appears to part around the disc rather
-                than to run underneath it. */}
-            <View style={styles.actuatorRing}>
-              <View style={styles.actuator}>
-                <NavPlus size={24} tint={color.onInk} />
-              </View>
+            <View style={styles.row}>
+              {TABS.map((key) => (
+                <Item key={key} slot={SLOTS[key]} active={current === key} onSelect={select} />
+              ))}
             </View>
-          </Press>
-          <Txt variant="micro" t="muted" style={styles.centreLabel}>
-            lançar
-          </Txt>
+          </View>
         </View>
 
-        {RIGHT.map((s) => (
-          <Item key={s.key} slot={s} active={active === s.key} onSelect={go} />
-        ))}
-      </View>
+        <Press
+          onPress={() => router.push('/lancar')}
+          haptic="light"
+          scale={0.92}
+          dim={0.85}
+          outerStyle={styles.actuatorShadow}
+          style={styles.actuator}
+          accessibilityLabel="Lançar"
+        >
+          {/* Shading, not decoration: lighter at the top and a breath darker at the foot is what
+              makes a flat disc read as a rounded, lit object beside the glass. */}
+          <LinearGradient
+            colors={['rgba(255,255,255,0.9)', 'rgba(255,255,255,0)', 'rgba(8,9,11,0.10)']}
+            locations={[0, 0.5, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+          <NavPlus size={26} tint={color.onInk} />
+        </Press>
+      </Animated.View>
+    </>
+  );
+}
+
+/**
+ * The pane itself: blurred page, dark tint, a sheen across the upper half, a lit top edge.
+ *
+ * Without a target there is nothing to sample, so the blur is left out entirely — a hidden bar
+ * should not keep re-rendering the page behind it every frame.
+ */
+function Glass({ blurTarget }: { blurTarget?: RefObject<View | null> }) {
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {blurTarget ? (
+        <BlurView
+          blurTarget={blurTarget}
+          blurMethod="dimezisBlurViewSdk31Plus"
+          intensity={70}
+          tint="dark"
+          style={StyleSheet.absoluteFill}
+        />
+      ) : null}
+      <View style={styles.tint} />
+      <LinearGradient
+        colors={['rgba(255,255,255,0.07)', 'rgba(255,255,255,0)']}
+        locations={[0, 0.55]}
+        style={StyleSheet.absoluteFill}
+      />
+      <Rim />
     </View>
+  );
+}
+
+/** A hairline border, brightest along the top edge where the light falls. */
+function Rim() {
+  return (
+    <>
+      <View style={styles.edge} />
+      <LinearGradient
+        colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.5)', 'rgba(255,255,255,0)']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.highlight}
+      />
+    </>
   );
 }
 
@@ -130,67 +295,83 @@ function Item({
   onSelect: (key: TabKey) => void;
 }) {
   const Glyph = slot.icon;
-  const tint = active ? color.ink : color.inkFaint;
 
   return (
     <Press
       onPress={() => onSelect(slot.key)}
       haptic="selection"
-      scale={0.94}
+      scale={0.9}
+      dim={0.7}
       style={styles.item}
       outerStyle={styles.itemHit}
+      hitSlop={0}
       accessibilityLabel={slot.label}
       accessibilityState={{ selected: active }}
     >
-      <Glyph size={21} tint={tint} />
-      <Txt variant="micro" t={active ? 'muted' : 'faint'} numberOfLines={1} style={styles.label}>
+      <Glyph size={22} tint={active ? color.ink : IDLE} />
+      <Txt
+        variant="micro"
+        f={active ? 'sansMedium' : 'sans'}
+        numberOfLines={1}
+        style={[styles.label, !active && styles.idle]}
+      >
         {slot.label}
       </Txt>
     </Press>
   );
 }
 
-const ACTUATOR = 46;
-const MARKER_W = 18;
+const SHADOW = '0px 10px 28px rgba(0, 0, 0, 0.55)';
 
 const styles = StyleSheet.create({
-  bar: { paddingTop: 0 },
-  rule: { height: StyleSheet.hairlineWidth, backgroundColor: color.hairline },
-  row: { flexDirection: 'row', alignItems: 'flex-start' },
+  fade: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 
-  /* The rail spans the bar so the marker's percentage resolves against the same box the slots do,
-     and sits where the old per-item mark sat: between the hairline and the glyphs. */
-  markerRail: { height: 2, marginTop: space.sm },
-  marker: {
+  /* Inside the curve-safe gutter: the bar is a touch target, and no touch target enters the curve. */
+  dock: {
     position: 'absolute',
-    width: MARKER_W,
-    height: 2,
-    borderRadius: 1,
-    marginLeft: -MARKER_W / 2,
-    backgroundColor: color.ink,
+    left: space.gutter,
+    right: space.gutter,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: GAP,
   },
 
-  /* The fifth of the row belongs to the touch target; the contents only centre themselves in it. */
+  capsuleShadow: { flex: 1, borderRadius: radius.pill, boxShadow: SHADOW },
+  capsule: { height: BAR, borderRadius: radius.pill, overflow: 'hidden' },
+  tint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(16, 18, 22, 0.58)' },
+
+  edge: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.13)',
+  },
+  /* Held off the rounded ends so the light lies along the flat of the top edge only. */
+  highlight: { position: 'absolute', top: 0, left: '12%', right: '12%', height: 1.5 },
+
+  lens: {
+    position: 'absolute',
+    top: INSET,
+    bottom: INSET,
+    left: INSET,
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  },
+
+  row: { ...StyleSheet.absoluteFill, flexDirection: 'row', paddingHorizontal: INSET },
+  /* The quarter of the row belongs to the touch target; the contents only centre themselves in it. */
   itemHit: { flex: 1 },
-  item: { alignItems: 'center', paddingTop: space.xs, minHeight: 52, paddingHorizontal: 2 },
-  label: { paddingTop: 3 },
+  item: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  label: { marginTop: 2 },
+  idle: { color: IDLE },
 
-  centre: { flex: 1, alignItems: 'center' },
-  centreLabel: { paddingTop: 3 },
-  /* The lift has to move the target, not just what is drawn in it. On the inner view the disc rose
-     and its touch area stayed behind, so the visible button and the tappable button were 18dp
-     apart — the one control on this bar that the product is built around. */
-  actuatorLift: { marginTop: -20 },
-  actuatorHit: { minHeight: 0 },
-  actuatorRing: {
-    padding: 4,
-    borderRadius: radius.pill,
-    backgroundColor: color.bg,
-  },
+  actuatorShadow: { borderRadius: radius.pill, boxShadow: SHADOW },
   actuator: {
-    width: ACTUATOR,
-    height: ACTUATOR,
+    width: BAR,
+    height: BAR,
     borderRadius: radius.pill,
+    overflow: 'hidden',
     backgroundColor: color.ink,
     alignItems: 'center',
     justifyContent: 'center',

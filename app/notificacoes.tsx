@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { Screen } from '@/ui/Screen';
 import { BackBar } from '@/ui/BackBar';
 import { Press } from '@/ui/Press';
+import { Button } from '@/ui/Button';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
 import { useSnackbar } from '@/ui/Snackbar';
@@ -24,10 +25,14 @@ import {
   type NotificationSettings,
 } from '@/lib/notify';
 
+/*
+ * One voice (NOT-02): the owner is "você", OTTO is spoken of impersonally. These read as "eu aviso"
+ * in one line and "não enviamos" in the next — two narrators on one screen, neither of them OTTO.
+ */
 const LEVELS: { key: NotificationLevel; title: string; body: string }[] = [
-  { key: 'essential', title: 'Essencial', body: 'Só aviso quando seu saldo pode ficar negativo, ou quando um teto não vai chegar ao fim do mês.' },
-  { key: 'planning', title: 'Planejamento', body: 'Também aviso no fechamento de uma fatura relevante.' },
-  { key: 'complete', title: 'Completo', body: 'Inclui o resumo dos compromissos que vencem amanhã.' },
+  { key: 'essential', title: 'Essencial', body: 'Só quando seu saldo pode ficar negativo, ou quando um teto não chega ao fim do mês.' },
+  { key: 'planning', title: 'Planejamento', body: 'Também quando fecha uma fatura que pesa no mês.' },
+  { key: 'complete', title: 'Completo', body: 'Também o resumo dos compromissos que vencem amanhã.' },
 ];
 
 export default function Notificacoes() {
@@ -117,30 +122,41 @@ function NotificationBody() {
       </View>
 
       <Section label="seu nível de atenção" />
-      {LEVELS.map((level) => {
-        const selected = settings.level === level.key;
-        return (
-          <Press
-            key={level.key}
-            onPress={() => void choose(level.key)}
-            disabled={busy || available === 'no-device'}
-            haptic="light"
-            scale={0.99}
-            style={[styles.level, selected ? styles.levelSelected : null]}
-            accessibilityLabel={`${level.title}. ${level.body}`}
-            accessibilityState={{ selected }}
-          >
-            <View style={styles.levelCopy}>
-              <Txt variant="body" f={selected ? 'sansSemibold' : 'sans'}>{level.title}</Txt>
-              <Txt variant="micro" t="faint" style={styles.levelBody}>{level.body}</Txt>
-            </View>
-            <View style={[styles.levelMark, { backgroundColor: selected ? color.ink : color.hairlineStrong }]} />
-          </Press>
-        );
-      })}
+      {/*
+        A radio group, drawn as one (NOT-01): a ring that fills for the chosen level, on the left
+        where the eye starts the row, and no raised card behind it. The old marker was a short
+        dash that only changed shade, inside a `surface` box that broke the ledger's no-cards rule.
+      */}
+      <View accessibilityRole="radiogroup">
+        {LEVELS.map((level) => {
+          const selected = settings.level === level.key;
+          return (
+            <Press
+              key={level.key}
+              onPress={() => void choose(level.key)}
+              disabled={busy || available === 'no-device'}
+              haptic="light"
+              scale={0.99}
+              style={styles.level}
+              accessibilityLabel={`${level.title}. ${level.body}`}
+              accessibilityState={{ selected }}
+            >
+              <View style={[styles.radio, selected ? styles.radioOn : null]}>
+                {selected ? <View style={styles.radioDot} /> : null}
+              </View>
+              <View style={styles.levelCopy}>
+                <Txt variant="body" f={selected ? 'sansMedium' : 'sans'} t={selected ? 'ink' : 'muted'}>
+                  {level.title}
+                </Txt>
+                <Txt variant="micro" t="faint" style={styles.levelBody}>{level.body}</Txt>
+              </View>
+            </Press>
+          );
+        })}
+      </View>
 
       <Txt variant="micro" t="faint" style={styles.note}>
-        Você pode mudar o nível ou pausar tudo a qualquer momento. Não enviamos propaganda nem lembretes vazios.
+        Você pode mudar o nível ou pausar tudo a qualquer momento. Nada de propaganda nem lembretes vazios.
       </Txt>
 
       <Section label="permissão e fila" />
@@ -157,7 +173,7 @@ function NotificationBody() {
         <>
           <Status title="Avisos ativos neste aparelho." body={queued ? `${queued} ${queued === 1 ? 'aviso está programado' : 'avisos estão programados'} agora.` : 'Nada precisa da sua atenção agora.'} />
           <Press
-            onPress={() => void testFire().then((ok) => snack(ok ? 'Feche o app: o teste chega em 5 segundos.' : 'Não consegui agendar o teste.', ok ? 'info' : 'error'))}
+            onPress={() => void testFire().then((ok) => snack(ok ? 'Feche o app: o teste chega em 5 segundos.' : 'Não foi possível agendar o teste.', ok ? 'info' : 'error'))}
             disabled={busy}
             style={styles.textAction}
             accessibilityLabel="Testar um aviso"
@@ -165,15 +181,16 @@ function NotificationBody() {
             <Txt variant="body" t="muted">Testar um aviso</Txt>
           </Press>
           <Press onPress={() => void pause()} disabled={busy} style={styles.textAction} accessibilityLabel="Pausar todos os avisos">
-            <Txt variant="body" t="negative">Pausar todos os avisos</Txt>
+            {/* Pausing is reversible and loses nothing, so it is not drawn as a destructive act. */}
+            <Txt variant="body" t="muted">Pausar todos os avisos</Txt>
           </Press>
         </>
       ) : (
         <>
-          <Status title="Ainda não pedimos permissão." body="Quando você ativar, o Android confirma a sua escolha uma única vez." />
-          <Press onPress={() => void activate()} disabled={busy} haptic="light" style={styles.primary} accessibilityLabel="Permitir e ativar avisos">
-            <Txt variant="body" f="sansSemibold" t="onInk">Permitir e ativar</Txt>
-          </Press>
+          <Status title="Os avisos ainda estão desligados." body="Ao ativar, o Android pede a sua confirmação uma única vez." />
+          <View style={styles.primary}>
+            <Button label="Permitir e ativar" onPress={() => void activate()} disabled={busy} loading={busy} />
+          </View>
         </>
       )}
     </ScrollView>
@@ -193,10 +210,13 @@ const styles = StyleSheet.create({
   heading: { paddingTop: space.lg }, intro: { paddingTop: space.xs },
   section: { paddingTop: space.xxl }, rule: { height: StyleSheet.hairlineWidth, backgroundColor: color.hairline },
   sectionLabel: { letterSpacing: 0.8, paddingTop: space.md },
-  level: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.hairline },
-  levelSelected: { backgroundColor: color.surface }, levelCopy: { flex: 1, paddingHorizontal: space.md }, levelBody: { paddingTop: 2 },
-  levelMark: { width: 18, height: 2, borderRadius: 1, marginRight: space.md }, note: { paddingTop: space.md },
+  level: { flexDirection: 'row', alignItems: 'center', gap: space.lg, paddingVertical: space.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.hairline },
+  levelCopy: { flex: 1 }, levelBody: { paddingTop: 2 },
+  radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: color.hairlineStrong, alignItems: 'center', justifyContent: 'center' },
+  radioOn: { borderColor: color.ink },
+  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: color.ink },
+  note: { paddingTop: space.md },
   status: { paddingTop: space.md }, statusBody: { paddingTop: space.xs },
-  primary: { alignItems: 'center', backgroundColor: color.ink, marginTop: space.lg, paddingHorizontal: space.lg },
+  primary: { marginTop: space.lg },
   textAction: { paddingTop: space.lg },
 });

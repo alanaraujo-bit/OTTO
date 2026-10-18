@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -9,9 +9,11 @@ import { Button } from './Button';
 import { Amount } from './Amount';
 import { DebtSharePanel } from './DebtSharePanel';
 import { PaymentHistory } from './PaymentHistory';
+import { ChipRow } from './Chip';
+import { deferChoices } from './choices';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
-import { dayKey, parseDay } from '@/domain/projection';
+import { parseDay } from '@/domain/projection';
 import { commitmentFor } from '@/domain/commitments';
 import { brlShort } from '@/domain/money';
 import type { DebtHistory } from '@/domain/settlement';
@@ -42,6 +44,9 @@ export function RecurrenceDetail({
   series,
   history,
   open,
+  following,
+  today,
+  onDefer,
   canSettle,
   settling,
   onSettle,
@@ -50,15 +55,20 @@ export function RecurrenceDetail({
   series: Series;
   history: DebtHistory;
   open: Occurrence | null;
+  /** The occurrence after `open` — said alongside it when `open` is already overdue. */
+  following: Occurrence | null;
+  today: string;
+  /** Absent when the occurrence is not this owner's to move (a linked share). */
+  onDefer?: (to: string | null) => Promise<void>;
   canSettle: boolean;
   settling: boolean;
   onSettle: () => void;
   onEdit: () => void;
 }) {
-  const today = useMemo(() => dayKey(new Date()), []);
   const commitment = useMemo(() => commitmentFor(series, today), [series, today]);
   const debt = series.kind === 'debt' && series.totalCount != null;
   const remaining = commitment.remaining;
+  const late = open !== null && open.on < today;
 
   return (
     <>
@@ -103,16 +113,39 @@ export function RecurrenceDetail({
             {debt ? (
               <DetailFact label="cada parcela" value={<Amount cents={series.amountCents} size="body" tone="muted" />} />
             ) : (
-              <DetailFact label="por ano" value={brlShort(commitment.yearCents)} />
+              <DetailFact label="por ano" value={brlShort(commitment.yearCents)} mono />
             )}
-            <DetailFact
-              label="próxima"
-              value={open ? format(parseDay(open.date), "d 'de' MMMM", { locale: ptBR }) : '—'}
-            />
+            {/*
+              An occurrence whose day has passed with nothing settling it is said as what it is —
+              "vencido" for a bill, "não recebido" for money that should have arrived — in
+              `warning`, with the next date beside it. The landing day is `on`, not `date`: a
+              deferred occurrence is read where it now falls.
+            */}
+            {open && late ? (
+              <>
+                <DetailFact
+                  label={series.direction === 'in' ? 'não recebido' : 'vencido'}
+                  value={longDate(open.on)}
+                  tone="warning"
+                />
+                <DetailFact label="depois" value={following ? longDate(following.on) : '—'} />
+              </>
+            ) : (
+              <DetailFact
+                label="próxima"
+                value={
+                  open
+                    ? open.on !== open.date
+                      ? `${longDate(open.on)} · adiada`
+                      : longDate(open.on)
+                    : '—'
+                }
+              />
+            )}
             {remaining ? (
               <DetailFact
                 label="termina"
-                value={format(parseDay(remaining.finishes), "MMM 'de' yyyy", { locale: ptBR })}
+                value={format(parseDay(remaining.finishes), "MMMM 'de' yyyy", { locale: ptBR })}
                 last
               />
             ) : (
@@ -131,6 +164,17 @@ export function RecurrenceDetail({
                 loading={settling}
               />
             </View>
+          </Reveal>
+        ) : null}
+
+        {open && onDefer ? (
+          <Reveal index={2} {...ENTER} rise={0}>
+            <Defer
+              open={open}
+              today={today}
+              noun={debt ? 'esta parcela' : series.direction === 'in' ? 'este recebimento' : 'este vencimento'}
+              onDefer={onDefer}
+            />
           </Reveal>
         ) : null}
 
@@ -167,28 +211,162 @@ export function RecurrenceDetail({
   );
 }
 
+const longDate = (d: string) => format(parseDay(d), "d 'de' MMMM", { locale: ptBR });
+
+/**
+ * "Adiar", as deliberate steps on the reading rather than a form.
+ *
+ * A quiet link opens three dated choices; picking one only arms the button, and the button names
+ * the exact day before anything is written — "Adiar para 25 de outubro". So the write is always the
+ * third, explicit tap, and the day is never a guess. Cancelar folds it away. When the occurrence was
+ * already moved, the same place offers putting it back on the rule's own day.
+ *
+ * The choices come from `deferChoices`, which only offers days the engine will honour (strictly
+ * after the occurrence's own day), counted from today when the occurrence is already overdue.
+ */
+function Defer({
+  open,
+  today,
+  noun,
+  onDefer,
+}: {
+  open: Occurrence;
+  today: string;
+  noun: string;
+  onDefer: (to: string | null) => Promise<void>;
+}) {
+  const [opened, setOpened] = useState(false);
+  const [to, setTo] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const choices = useMemo(() => deferChoices(open, today), [open, today]);
+  const ruleDay = Number(open.date.slice(8));
+  const moved = open.on !== open.date;
+
+  // A different occurrence (after a settle or a defer) starts the choice over.
+  useEffect(() => {
+    setOpened(false);
+    setTo(null);
+  }, [open.seriesId, open.date, open.on]);
+
+  const run = async (target: string | null) => {
+    setBusy(true);
+    try {
+      await onDefer(target);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!opened) {
+    return (
+      <View>
+        <Press
+          onPress={() => setOpened(true)}
+          style={styles.deferLink}
+          accessibilityLabel={`Adiar ${noun}`}
+        >
+          <Txt variant="label" t="muted" center>{`Adiar ${noun}`}</Txt>
+        </Press>
+        {moved ? (
+          <Press
+            onPress={() => void run(null)}
+            disabled={busy}
+            style={styles.deferLink}
+            accessibilityLabel={`Voltar para o dia ${ruleDay}`}
+          >
+            <Txt variant="label" t="faint" center>{`Voltar para o dia ${ruleDay}`}</Txt>
+          </Press>
+        ) : null}
+      </View>
+    );
+  }
+
+  const chosen = choices.find((c) => c.to === to);
+  return (
+    <View style={styles.defer}>
+      <View style={styles.detailRule} />
+      <Txt variant="micro" f="sansMedium" t="muted" style={styles.deferLabel}>
+        {`ADIAR ${noun.toUpperCase()} PARA`}
+      </Txt>
+      <ChipRow
+        items={choices.map((c) => ({
+          key: c.to,
+          label: c.label,
+          accessibilityLabel: `${longDate(c.to)}, ${c.distance}`,
+        }))}
+        selected={to}
+        onPick={(k) => setTo((prev) => (prev === k ? null : k))}
+      />
+      <Txt variant="micro" t="faint" style={styles.hint}>
+        {chosen
+          ? `${chosen.distance.charAt(0).toUpperCase()}${chosen.distance.slice(1)}. A regra continua no dia ${ruleDay}; só este mês muda.`
+          : 'Escolha o novo dia. Nada muda até você confirmar.'}
+      </Txt>
+      <View style={styles.deferAction}>
+        <Button
+          label={to ? `Adiar para ${longDate(to)}` : 'Escolha um dia'}
+          variant="outline"
+          onPress={() => {
+            if (to) void run(to);
+          }}
+          disabled={!to || busy}
+          loading={busy}
+        />
+      </View>
+      <Press
+        onPress={() => {
+          setOpened(false);
+          setTo(null);
+        }}
+        style={styles.deferLink}
+        accessibilityLabel="Cancelar adiamento"
+      >
+        <Txt variant="label" t="faint" center>Cancelar</Txt>
+      </Press>
+    </View>
+  );
+}
+
+/**
+ * One fact. Words and dates written as words are set in sans; mono is for numbers only, so a figure
+ * passed as a string asks for it with `mono`.
+ */
 function DetailFact({
   label,
   value,
   last = false,
+  mono = false,
+  tone = 'muted',
 }: {
   label: string;
   value: ReactNode;
   last?: boolean;
+  mono?: boolean;
+  tone?: 'muted' | 'warning';
 }) {
   return (
     <View style={[styles.detailFact, last ? styles.detailFactLast : null]}>
       <Txt variant="micro" t="faint">{label}</Txt>
       {typeof value === 'string' ? (
-        <Txt variant="body" f="monoMedium" t="muted" tabular>{value}</Txt>
+        <Txt
+          variant="body"
+          f={mono ? 'monoMedium' : 'sans'}
+          t={tone}
+          tabular={mono}
+          numberOfLines={1}
+          style={styles.detailValue}
+        >
+          {value}
+        </Txt>
       ) : value}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  scroll: { paddingTop: space.md, paddingBottom: space.xxxl },
+  /* Edge to edge, padded back to the gutter, so the Adiar chips can bleed — see lançar. */
+  flex: { flex: 1, marginHorizontal: -space.gutter },
+  scroll: { paddingTop: space.md, paddingBottom: space.xxxl, paddingHorizontal: space.gutter },
   hint: { paddingTop: space.sm },
   linkedNotice: { paddingTop: space.xl },
   consequenceRule: {
@@ -214,6 +392,11 @@ const styles = StyleSheet.create({
     borderBottomColor: color.hairline,
   },
   detailFactLast: { borderBottomWidth: 0 },
+  detailValue: { flexShrink: 1, paddingLeft: space.lg, textAlign: 'right' },
   detailSettle: { paddingTop: space.xl },
   detailEdit: { minHeight: 48, justifyContent: 'center', marginTop: space.lg },
+  deferLink: { minHeight: 48, justifyContent: 'center', marginTop: space.sm },
+  defer: { paddingTop: space.lg },
+  deferLabel: { letterSpacing: 0.8, paddingTop: space.lg, paddingBottom: space.md },
+  deferAction: { paddingTop: space.lg },
 });

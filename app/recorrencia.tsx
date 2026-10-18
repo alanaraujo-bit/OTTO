@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
-import { format, startOfMonth, subMonths } from 'date-fns';
+import { addDays, addMonths, endOfMonth, format, startOfMonth, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Screen } from '@/ui/Screen';
 import { BackBar } from '@/ui/BackBar';
@@ -14,18 +14,21 @@ import { RecurrenceDetail } from '@/ui/RecurrenceDetail';
 import { Field } from '@/ui/Field';
 import { MoneyField } from '@/ui/MoneyField';
 import { KeyboardAwareScrollView } from '@/ui/KeyboardAwareScrollView';
-import { Amount } from '@/ui/Amount';
+import { ChipRow } from '@/ui/Chip';
+import { categoryOrderFor } from '@/ui/choices';
 import { Txt } from '@/theme/text';
 import { color, radius, space } from '@/theme/tokens';
+import { saidPlainly } from '@/lib/errors';
 import { useSnackbar } from '@/ui/Snackbar';
 import { useLedger } from '@/state/ledger';
-import { deleteSeries, insertSeries, updateSeries } from '@/db/repo';
-import { pickerOrder } from '@/domain/category';
-import { dayKey, nextOpen, parseDay } from '@/domain/projection';
+import { deferOccurrence, deleteSeries, insertSeries, updateSeries } from '@/db/repo';
+import { dayKey, nextOpen, parseDay, project } from '@/domain/projection';
+import { settled } from '@/domain/settlement';
+import { monthOf } from '@/domain/deferral';
 import { commitmentFor } from '@/domain/commitments';
-import { debtHistory, type DebtHistory } from '@/domain/settlement';
+import { debtHistory } from '@/domain/settlement';
 import { brlShort } from '@/domain/money';
-import type { Occurrence, Series, SeriesKind } from '@/domain/model';
+import type { Series, SeriesKind } from '@/domain/model';
 
 const ENTER = { delay: 160, step: 70, cap: 6, rise: 10, shift: 26 } as const;
 
@@ -53,10 +56,15 @@ export default function Recorrencia() {
 /** The three shapes a recurrence can take, in the owner's terms rather than the schema's. */
 type Shape = 'out' | 'in' | 'debt';
 
+/*
+ * Named by what the thing *is*, not half by direction and half by shape. "SAI / ENTRA / TERMINA"
+ * answered two different questions in one row (REC-05) — and a debt can come in as easily as go
+ * out, which is what "De que lado está" below already asks.
+ */
 const SHAPES: { key: Shape; label: string; note: string }[] = [
-  { key: 'out', label: 'SAI', note: 'uma conta ou assinatura que se repete' },
-  { key: 'in', label: 'ENTRA', note: 'salário ou outra renda que se repete' },
-  { key: 'debt', label: 'TERMINA', note: 'uma dívida com um número de parcelas' },
+  { key: 'out', label: 'SAÍDA FIXA', note: 'conta ou assinatura, todo mês, sem data para acabar' },
+  { key: 'in', label: 'ENTRADA FIXA', note: 'salário ou outra renda, todo mês' },
+  { key: 'debt', label: 'PARCELADA', note: 'dívida ou parcelamento, com número de parcelas' },
 ];
 
 function Form() {
@@ -68,13 +76,6 @@ function Form() {
   const load = useLedger((s) => s.load);
   const storedCategories = useLedger((s) => s.categories);
   const deferrals = useLedger((s) => s.deferralsBySlot);
-
-  // The same vocabulary the lançamento screen offers, in the same order. Two lists that diverge
-  // teach the owner to distrust both.
-  const categories = useMemo(
-    () => pickerOrder(entries, series, storedCategories),
-    [entries, series, storedCategories],
-  );
 
   const existing = useMemo(() => series.find((s) => s.id === id) ?? null, [series, id]);
 
@@ -96,6 +97,14 @@ function Form() {
   const [paid, setPaid] = useState('');
   const [saving, setSaving] = useState(false);
   const [armed, setArmed] = useState(false);
+
+  // The same vocabulary the lançamento screen offers, in the same order and listening to the same
+  // direction. Two lists that diverge teach the owner to distrust both.
+  const direction = shape === 'debt' ? debtDirection : shape === 'in' ? 'in' : 'out';
+  const categories = useMemo(
+    () => categoryOrderFor(direction, entries, series, storedCategories),
+    [direction, entries, series, storedCategories],
+  );
   // A rule that already exists opens as a reading. Creating one has nothing to read, so the form is
   // the only sensible landing and this starts true there.
   const [editing, setEditing] = useState(false);
@@ -112,6 +121,45 @@ function Form() {
     () => (existing ? nextOpen(existing, entries, today, deferrals) : null),
     [existing, entries, deferrals, today],
   );
+  /*
+   * What comes after the open occurrence. Read when that one is overdue: the reading then has two
+   * dates to say — the one that was missed and the one the rule moves on to. "Próxima: 8 de
+   * outubro" on a rent ten days late was the screen calling the past the future (REC-01).
+   */
+  const following = useMemo(() => {
+    if (!existing || !open) return null;
+    const t = parseDay(today);
+    const to = dayKey(endOfMonth(addMonths(t, 13)));
+    return (
+      project([existing], dayKey(addDays(t, 1)), to, settled(entries), deferrals).find(
+        (o) => o.date !== open.date,
+      ) ?? null
+    );
+  }, [existing, open, entries, deferrals, today]);
+
+  /*
+   * Adiar: move the open occurrence to a later day, or put it back.
+   *
+   * Through `deferOccurrence`, keyed by the occurrence's own month, so the rule is untouched and the
+   * installment keeps its number wherever it lands — see `domain/deferral`. The detail screen owns
+   * the choosing and the confirming; this only writes what it was told.
+   */
+  const defer = async (to: string | null) => {
+    if (!existing || !open) return;
+    try {
+      await deferOccurrence(existing.id, monthOf(open.date), to);
+      await load();
+      snack(
+        to
+          ? `Adiado para ${format(parseDay(to), "d 'de' MMMM", { locale: ptBR })}.`
+          : `De volta ao dia ${Number(open.date.slice(8))}.`,
+        'info',
+      );
+    } catch (e) {
+      snack(saidPlainly(e), 'error');
+    }
+  };
+
   /*
    * Where the settlement lands: the account the rule already names.
    *
@@ -246,7 +294,7 @@ function Form() {
       router.back();
     } catch (e) {
       setSaving(false);
-      snack(e instanceof Error ? e.message : 'Não consegui salvar.', 'error');
+      snack(saidPlainly(e), 'error');
     }
   };
 
@@ -263,6 +311,9 @@ function Form() {
         series={existing}
         history={history}
         open={open}
+        following={following}
+        today={today}
+        onDefer={existing.linkedShareToken ? undefined : defer}
         canSettle={Boolean(settleAccount) && !existing.linkedShareToken}
         settling={false}
         onSettle={settleNow}
@@ -332,7 +383,7 @@ function Form() {
                   <Txt
                     variant="label"
                     f="sansMedium"
-                    t={debtDirection === option.key ? 'ink' : 'faint'}
+                    t={debtDirection === option.key ? 'onInk' : 'muted'}
                     center
                   >
                     {option.label}
@@ -372,13 +423,19 @@ function Form() {
 
         <View style={styles.gap} />
         <Reveal index={2} {...ENTER}>
-          <MoneyField label="Valor da parcela" cents={amount} onChangeCents={setAmount} />
+          {/* A rent has no parcelas; only a debt does (REC-02). */}
+          <MoneyField
+            label={shape === 'debt' ? 'Valor da parcela' : 'Valor por mês'}
+            cents={amount}
+            onChangeCents={setAmount}
+          />
         </Reveal>
 
         <View style={styles.gap} />
         <Reveal index={3} {...ENTER}>
           <Field
             label="Dia do mês"
+            numeric
             value={day}
             onChangeText={(t) => setDay(t.replace(/\D/g, '').slice(0, 2))}
             keyboardType="number-pad"
@@ -395,6 +452,7 @@ function Form() {
             <Reveal index={4} {...ENTER}>
               <Field
                 label="Total de parcelas"
+                numeric
                 value={total}
                 onChangeText={(t) => setTotal(t.replace(/\D/g, '').slice(0, 3))}
                 keyboardType="number-pad"
@@ -402,6 +460,7 @@ function Form() {
               <View style={styles.gap} />
               <Field
                 label="Parcelas já pagas"
+                numeric
                 value={paid}
                 onChangeText={(t) => setPaid(t.replace(/\D/g, '').slice(0, 3))}
                 keyboardType="number-pad"
@@ -419,31 +478,15 @@ function Form() {
           <Txt variant="micro" f="sansMedium" t="muted" style={styles.groupLabel}>
             CATEGORIA
           </Txt>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chips}
-          >
-            {categories.map((c) => (
-              <Press
-                key={c}
-                onPress={() => setCategory(c)}
-                scale={0.95}
-                hitSlop={4}
-                style={[styles.chip, category === c ? styles.chipOn : null]}
-                accessibilityLabel={c}
-                accessibilityState={{ selected: category === c }}
-              >
-                <Txt
-                  variant="label"
-                  f={category === c ? 'sansMedium' : 'sans'}
-                  t={category === c ? 'ink' : 'muted'}
-                >
-                  {c}
-                </Txt>
-              </Press>
-            ))}
-          </ScrollView>
+          <ChipRow
+            // A category the list does not hold (renamed elsewhere since) is still the rule's own,
+            // so it stays offered — selected — rather than silently swapping to another on Salvar.
+            items={(categories.includes(category) ? categories : [category, ...categories]).map(
+              (c) => ({ key: c, label: c }),
+            )}
+            selected={category}
+            onPick={setCategory}
+          />
         </Reveal>
 
         {/*
@@ -453,11 +496,27 @@ function Form() {
         {preview ? (
           <View style={styles.consequence}>
             <View style={styles.consequenceRule} />
-            <Txt variant="body" t="ink">
-              {shape === 'debt' && preview.commitment.remaining
-                ? `Faltam ${preview.commitment.remaining.count} de ${totalCount}: ${brlShort(preview.commitment.remaining.cents)}, terminando em ${format(parseDay(preview.commitment.remaining.finishes), "MMM 'de' yyyy", { locale: ptBR })}.`
-                : `${brlShort(preview.commitment.yearCents)} por ano.`}
-            </Txt>
+            {/* Figures in mono, the sentence around them in sans — one sentence, two families. */}
+            {shape === 'debt' && preview.commitment.remaining ? (
+              <Txt variant="body" t="ink">
+                {'Faltam '}
+                <Txt variant="body" f="mono" tabular>
+                  {`${preview.commitment.remaining.count} de ${totalCount}`}
+                </Txt>
+                {': '}
+                <Txt variant="body" f="mono" tabular>
+                  {brlShort(preview.commitment.remaining.cents)}
+                </Txt>
+                {`, terminando em ${format(parseDay(preview.commitment.remaining.finishes), "MMMM 'de' yyyy", { locale: ptBR })}.`}
+              </Txt>
+            ) : (
+              <Txt variant="body" t="ink">
+                <Txt variant="body" f="mono" tabular>
+                  {brlShort(preview.commitment.yearCents)}
+                </Txt>
+                {' por ano.'}
+              </Txt>
+            )}
           </View>
         ) : null}
 
@@ -494,10 +553,10 @@ function Form() {
                 .then(() => router.back());
             }}
             style={styles.remove}
-            accessibilityLabel="Apagar recorrência"
+            accessibilityLabel={armed ? 'Toque de novo para excluir' : 'Excluir recorrência'}
           >
             <Txt variant="label" t={armed ? 'negative' : 'faint'} center>
-              {armed ? 'Toque de novo para apagar' : 'Apagar recorrência'}
+              {armed ? 'Toque de novo para excluir' : 'Excluir recorrência'}
             </Txt>
             {/* The owner will assume deleting the rule deletes the history. It does not. */}
             <Txt variant="micro" t="faint" center style={styles.removeNote}>
@@ -570,8 +629,9 @@ const styles = StyleSheet.create({
   detailFactLast: { borderBottomWidth: 0 },
   detailSettle: { paddingTop: space.xl },
   detailEdit: { minHeight: 48, justifyContent: 'center', marginTop: space.lg },
-  flex: { flex: 1 },
-  scroll: { paddingTop: space.md, paddingBottom: space.xxxl },
+  /* Edge to edge, padded back to the gutter, so the category row can bleed — see lançar. */
+  flex: { flex: 1, marginHorizontal: -space.gutter },
+  scroll: { paddingTop: space.md, paddingBottom: space.xxxl, paddingHorizontal: space.gutter },
   gap: { height: space.lg },
   hint: { paddingTop: space.sm },
 
@@ -589,19 +649,10 @@ const styles = StyleSheet.create({
     borderColor: color.hairline,
     borderRadius: radius.md,
   },
-  debtSideOn: { borderColor: color.hairlineStrong, backgroundColor: color.surfaceHi },
+  // Same "this one" as every chip: ink fill, ground-coloured text.
+  debtSideOn: { borderColor: color.ink, backgroundColor: color.ink },
 
   groupLabel: { letterSpacing: 0.8, paddingTop: space.xl, paddingBottom: space.md },
-  chips: { flexDirection: 'row', gap: space.sm, paddingRight: space.gutter },
-  chip: {
-    minHeight: 0,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.hairline,
-  },
-  chipOn: { borderColor: color.hairlineStrong, backgroundColor: color.surface },
 
   consequence: { paddingTop: space.xl },
   linkedNotice: { paddingTop: space.xl },

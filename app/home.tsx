@@ -11,16 +11,17 @@ import { Amount } from '@/ui/Amount';
 import { MonthStepper } from '@/ui/MonthStepper';
 import { MonthFlow } from '@/ui/MonthFlow';
 import { Press } from '@/ui/Press';
-import { TabBar } from '@/ui/TabBar';
+import { Ask } from '@/ui/Icon';
+import { useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { BalanceCurve } from '@/ui/chart/BalanceCurve';
 import { CategoryDonut, type DonutSlice } from '@/ui/chart/CategoryDonut';
 import { DebtLadder } from '@/ui/chart/DebtLadder';
 import { Txt } from '@/theme/text';
-import { color, space } from '@/theme/tokens';
+import { color, HIT, space } from '@/theme/tokens';
 import { useLedger } from '@/state/ledger';
-import { useNav } from '@/lib/nav';
-import { lookFor } from '@/domain/category';
+import { forecastRoute, useNav } from '@/lib/nav';
+import { lookFor, ringCut } from '@/domain/category';
 import {
   dayItems,
   dayKey,
@@ -30,9 +31,11 @@ import {
   project,
   spendByCategory,
   type DayItem,
+  type MonthCurve,
 } from '@/domain/projection';
 import { settled } from '@/domain/settlement';
-import { brlDelta, brlShort } from '@/domain/money';
+import { withStatements } from '@/domain/card';
+import { brl, brlDelta, brlShort } from '@/domain/money';
 import { paymentSeries } from '@/domain/spend';
 
 /**
@@ -61,6 +64,7 @@ export default function Home() {
 }
 
 function HomeBody() {
+  const clearance = useTabBarClearance();
   // One arrival for all four tabs, carrying the direction of the move that produced it.
   const ENTER = useTabEntrance();
   const go = useNav((s) => s.go);
@@ -107,6 +111,9 @@ function HomeBody() {
     if (!ready || error) return null;
 
     const curve = monthCurve(accounts, entries, series, today, deferrals, anchor);
+    // What the lists project from — the rules plus each card's statement still to pay, the same set
+    // the curve above reads, so the names under it add up to its figures.
+    const forecast = withStatements(accounts, entries, series, today);
     const t = parseDay(today);
 
     // Spend is read over a rolling window in the current month and over the month itself in a closed
@@ -129,49 +136,44 @@ function HomeBody() {
      * Four named categories and a remainder, not five.
      *
      * The cut is the palette's, and it is honest about it: five hues survived colour-vision
-     * validation on this ground, and "Outros" is not one of them — it is the leftover, drawn in
+     * validation on this ground, and the remainder is not one of them — it is the leftover, drawn in
      * `inkFaint` because it has no identity to carry. Four named arcs plus a neutral is also simply
      * a better ring to read than six competing ones, so the constraint and the design agree.
+     *
+     * The cut itself is `ringCut`, which names the remainder "Demais" and keys it apart from any
+     * category — see the note there.
      */
-    const top = spend.slice(0, 4);
-    const rest = spend.slice(4).reduce((n, c) => n + c.cents, 0);
     const capOf = (name: string) =>
       caps.find((c) => c.category.trim().toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'))
         ?.capCents ?? null;
 
-    const categories: DonutSlice[] = [
-      ...top.map((c) => ({
-        category: c.category,
-        ...lookFor(c.category, storedCategories),
-        cents: c.cents,
-        capCents: capOf(c.category),
-      })),
-      ...(rest > 0
-        ? [
-            {
-              category: 'Outros',
-              ...lookFor('Outros', storedCategories),
-              cents: rest,
-              capCents: null,
-              isRest: true,
-            } satisfies DonutSlice,
-          ]
-        : []),
-    ];
+    const categories: DonutSlice[] = ringCut(spend, 4).map((c) =>
+      c.isRest
+        ? {
+            ...c,
+            // The seed "Outros" glyph, never the owner's own "Outros" look: the remainder has no
+            // identity to borrow, and its arc is drawn neutral regardless.
+            ...lookFor('Outros', []),
+            capCents: null,
+          }
+        : { ...c, ...lookFor(c.category, storedCategories), capCents: capOf(c.category) },
+    );
 
     // The named slice. In the current month that is today; in a month still ahead it is what the
     // month has committed to, which is the same question asked of a different tense. A closed month
     // gets neither — its names are in the spend breakdown below, and repeating them would be the
     // list restating itself.
-    const slice: { label: string; items: DayItem[] } | null =
+    const slice: { label: string; items: SliceItem[] } | null =
       curve.era === 'current'
-        ? { label: 'hoje', items: dayItems(entries, series, today, today, deferrals) }
+        ? { label: 'hoje', items: dayItems(entries, forecast, today, today, deferrals) }
         : curve.era === 'future'
           ? {
-              label: 'compromissos do mês',
-              items: project(series, curve.from, curve.to, settled(entries), deferrals)
-                .filter((o) => o.direction === 'out')
-                .slice(0, 6)
+              // Both directions, in date order. This used to keep only saídas and call them
+              // "lançamentos" — a month ahead has no lançamentos yet, and the salary that pays for
+              // the rent belongs on the same list as the rent.
+              label: 'previsto no mês',
+              items: project(forecast, curve.from, curve.to, settled(entries), deferrals)
+                .sort((a, b) => (a.on < b.on ? -1 : a.on > b.on ? 1 : 0))
                 .map((o) => ({
                   title: o.title,
                   category: o.category,
@@ -181,6 +183,8 @@ function HomeBody() {
                   overdue: false,
                   occurrence: { seriesId: o.seriesId, scheduled: o.date, accountId: o.accountId },
                   entryId: null,
+                  // Where it lands, which a deferral may have moved off its identifying date.
+                  on: o.on,
                 })),
             }
           : null;
@@ -196,10 +200,14 @@ function HomeBody() {
       curve,
       categories,
       spendTotal: spend.reduce((n, c) => n + c.cents, 0),
-      spendLabel: rolling ? 'últimos 30 dias' : 'gastos do mês',
+      spendLabel: rolling ? 'gastos dos últimos 30 dias' : 'gastos do mês',
       slice,
       net,
-      debts: debtStatus(series),
+      // Two directions, two totals. One "dívidas" figure used to add what the owner owes to what is
+      // owed to them — R$ 46.504 owed plus a R$ 1.500 sale being paid off read as R$ 48.004 of debt.
+      // Split the way Recorrências splits them, under the same names.
+      debts: debtStatus(series).filter((d) => d.series.direction === 'out'),
+      receivables: debtStatus(series).filter((d) => d.series.direction === 'in'),
     };
   }, [ready, error, accounts, entries, series, caps, storedCategories, deferrals, today, anchor]);
 
@@ -212,15 +220,31 @@ function HomeBody() {
     <>
       <ScrollView
         style={styles.flex}
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingBottom: clearance }]}
         showsVerticalScrollIndicator={false}
       >
         <Reveal index={0} {...ENTER.head}>
           <View style={styles.top}>
             <Wordmark height={22} animate alive />
-            <Txt variant="micro" t="faint">
-              {format(new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })}
-            </Txt>
+            <View style={styles.topSide}>
+              <Txt variant="micro" t="faint">
+                {format(new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })}
+              </Txt>
+              {/*
+                Otto lives at the top of the screen that asks "where do I stand", because that is
+                the question it answers in words. A glyph rather than a label, so the readout row
+                keeps its weight; the touch target is full size and is pulled back into the row's
+                22dp so nothing below it moves.
+              */}
+              <Press
+                onPress={() => router.push('/otto')}
+                outerStyle={styles.ask}
+                style={styles.askHit}
+                accessibilityLabel="Perguntar ao Otto"
+              >
+                <Ask size={20} tint={color.inkMuted} />
+              </Press>
+            </View>
           </View>
         </Reveal>
 
@@ -274,7 +298,25 @@ function HomeBody() {
             */}
             <Animated.View key={anchor} entering={FadeIn.duration(220)}>
               <Reveal index={2} {...ENTER.body}>
-                <View style={styles.hero}>
+                {/*
+                  The figure is a sum of movements, so touching it opens them — the razão, landed on
+                  the day this figure is read at. Same reasoning as the two totals below it.
+                */}
+                <Press
+                  onPress={() =>
+                    go('ledger', {
+                      at:
+                        view.curve.era === 'current'
+                          ? today
+                          : view.curve.era === 'past'
+                            ? view.curve.to
+                            : view.curve.from,
+                    })
+                  }
+                  scale={0.99}
+                  outerStyle={styles.hero}
+                  accessibilityLabel={`${heroLabel(view.curve.era)}, ${brl(view.curve.balanceNow)}. Abrir no razão.`}
+                >
                   <Amount
                     cents={view.curve.balanceNow}
                     size="hero"
@@ -282,24 +324,29 @@ function HomeBody() {
                   />
                   <View style={styles.heroRow}>
                     <Txt variant="label" t="muted">
-                      {view.curve.era === 'current'
-                        ? 'saldo hoje'
-                        : view.curve.era === 'past'
-                          ? 'saldo no fechamento'
-                          : 'saldo ao abrir o mês'}
+                      {heroLabel(view.curve.era)}
                     </Txt>
+                    {/* A coloured figure with no words beside it was a number asking to be decoded.
+                        It says which stretch it measured. */}
                     {view.net !== 0 ? (
-                      <Txt
-                        variant="label"
-                        f="monoMedium"
-                        t={view.net < 0 ? 'negative' : 'positive'}
-                        tabular
-                      >
-                        {brlDelta(view.net)}
+                      <Txt variant="label" t="faint" numberOfLines={1}>
+                        <Txt
+                          variant="label"
+                          f="monoMedium"
+                          t={view.net < 0 ? 'negative' : 'positive'}
+                          tabular
+                        >
+                          {brlDelta(view.net)}
+                        </Txt>
+                        {view.curve.era === 'current'
+                          ? ' no mês até hoje'
+                          : view.curve.era === 'past'
+                            ? ' no mês'
+                            : ' previsto no mês'}
                       </Txt>
                     ) : null}
                   </View>
-                </View>
+                </Press>
               </Reveal>
 
               <Reveal index={3} {...ENTER.body} rise={0} style={styles.plot}>
@@ -346,9 +393,7 @@ function HomeBody() {
                   <View style={styles.alert}>
                     <View style={styles.alertRule} />
                     <Txt variant="body" t="negative">
-                      No dia {view.curve.trough.day} o mês{' '}
-                      {view.curve.era === 'past' ? 'ficou' : 'fica'} negativo em{' '}
-                      {brlShort(view.curve.trough.balance)}.
+                      {troughSentence(view.curve)}
                     </Txt>
                   </View>
                 </Reveal>
@@ -367,10 +412,12 @@ function HomeBody() {
                   aside={
                     view.slice.items.length === 0
                       ? undefined
-                      : `${view.slice.items.length} ${view.slice.items.length === 1 ? 'lançamento' : 'lançamentos'}`
+                      : view.slice.items.length > SLICE_MAX
+                        ? `${SLICE_MAX} de ${view.slice.items.length}`
+                        : `${view.slice.items.length} ${view.slice.items.length === 1 ? 'item' : 'itens'}`
                   }
                 />
-                <DayRows items={view.slice.items} />
+                <DayRows items={view.slice.items.slice(0, SLICE_MAX)} />
               </View>
             ) : null}
 
@@ -380,7 +427,7 @@ function HomeBody() {
                 <CategoryDonut
                   slices={view.categories}
                   total={view.spendTotal}
-                  label={view.spendLabel}
+                  label="no total"
                   delay={520}
                   onSelect={() => router.push('/categorias')}
                 />
@@ -390,11 +437,37 @@ function HomeBody() {
             {view.debts.length > 0 ? (
               <View>
                 <Section
-                  label="dívidas"
+                  label="você deve"
+                  figure
                   aside={brlShort(view.debts.reduce((n, d) => n + d.remainingCents, 0))}
                 />
                 {view.debts.map((d, i) => (
-                  <DebtLadder key={d.series.id} debt={d} index={i} delay={640} />
+                  <Press
+                    key={d.series.id}
+                    onPress={() => openDebt(d.series.id, d.series.linkedShareToken)}
+                    accessibilityLabel={`Abrir ${d.series.title}`}
+                  >
+                    <DebtLadder debt={d} index={i} delay={640} />
+                  </Press>
+                ))}
+              </View>
+            ) : null}
+
+            {view.receivables.length > 0 ? (
+              <View>
+                <Section
+                  label="você recebe"
+                  figure
+                  aside={brlShort(view.receivables.reduce((n, d) => n + d.remainingCents, 0))}
+                />
+                {view.receivables.map((d, i) => (
+                  <Press
+                    key={d.series.id}
+                    onPress={() => openDebt(d.series.id, d.series.linkedShareToken)}
+                    accessibilityLabel={`Abrir ${d.series.title}`}
+                  >
+                    <DebtLadder debt={d} index={i} delay={700} />
+                  </Press>
                 ))}
               </View>
             ) : null}
@@ -405,13 +478,41 @@ function HomeBody() {
             existed. It exists, so it moved — the home screen is about money, and the far end of its
             scroll is not a drawer. */}
       </ScrollView>
-
-      <TabBar
-        active="home"
-        onCapture={() => router.push('/lancar')}
-      />
     </>
   );
+}
+
+/** A row of the named slice. A forecast in a month ahead also carries the day it lands on. */
+type SliceItem = DayItem & { on?: string };
+
+/** How many named rows the slice shows before the count takes over. The rest are one tap away. */
+const SLICE_MAX = 8;
+
+function heroLabel(era: MonthCurve['era']): string {
+  return era === 'current' ? 'saldo hoje' : era === 'past' ? 'saldo no fechamento' : 'saldo ao abrir o mês';
+}
+
+/**
+ * The warning, in one plain clause.
+ *
+ * "O mês fica negativo em −R$ 547" said negative twice and named the month as the thing going under,
+ * when it is the balance. And when the low point *is* the first day, "no dia 1" hid the real news —
+ * the month does not dip, it starts there.
+ */
+function troughSentence(curve: MonthCurve): string {
+  const figure = brlShort(curve.trough.balance);
+  if (curve.trough.day === 1 && curve.era !== 'current') {
+    const name = format(parseDay(curve.from), 'MMMM', { locale: ptBR });
+    const Name = name.charAt(0).toLocaleUpperCase('pt-BR') + name.slice(1);
+    return `${Name} ${curve.era === 'past' ? 'abriu' : 'já abre'} negativo, em ${figure}.`;
+  }
+  return `No dia ${curve.trough.day} o saldo ${curve.era === 'past' ? 'chegou' : 'chega'} a ${figure}.`;
+}
+
+/** A shared debt opens its live page; any other opens the rule — the same doors Recorrências uses. */
+function openDebt(id: string, token: string | null) {
+  if (token) router.push({ pathname: '/divida/[token]' as never, params: { token } });
+  else router.push({ pathname: '/recorrencia', params: { id } });
 }
 
 /**
@@ -424,7 +525,7 @@ function HomeBody() {
  * section names, captions, units, axis ticks, item categories — and a tone that means everything
  * ranks nothing. Faint now means "supporting detail" only, and these headings sit a step above it.
  */
-function Section({ label, aside }: { label: string; aside?: string }) {
+function Section({ label, aside, figure }: { label: string; aside?: string; figure?: boolean }) {
   return (
     <View style={styles.section}>
       <View style={styles.sectionRule} />
@@ -432,8 +533,9 @@ function Section({ label, aside }: { label: string; aside?: string }) {
         <Txt variant="micro" f="sansMedium" t="muted" style={styles.sectionLabel}>
           {label.toUpperCase()}
         </Txt>
+        {/* Mono only when the aside is a figure; a count written in words is a phrase. */}
         {aside ? (
-          <Txt variant="micro" f="mono" t="faint" tabular>
+          <Txt variant="micro" f={figure ? 'mono' : 'sans'} t="faint" tabular>
             {aside}
           </Txt>
         ) : null}
@@ -443,7 +545,7 @@ function Section({ label, aside }: { label: string; aside?: string }) {
 }
 
 /** The day, named. Amounts hold their own column because they are tabular and right-aligned. */
-function DayRows({ items }: { items: DayItem[] }) {
+function DayRows({ items }: { items: SliceItem[] }) {
   if (items.length === 0) {
     return (
       <Txt variant="body" t="faint" style={styles.emptyDay}>
@@ -472,9 +574,9 @@ function DayRows({ items }: { items: DayItem[] }) {
  * A forecast with no `occurrence` — there is no such row today — would have nowhere to go, so it
  * stays a readout rather than a control that does nothing.
  */
-function DayRow({ item: it }: { item: DayItem }) {
+function DayRow({ item: it }: { item: SliceItem }) {
   const to = it.occurrence
-    ? ({ pathname: '/recorrencia', params: { id: it.occurrence.seriesId } } as const)
+    ? forecastRoute(it.occurrence.seriesId, it.occurrence.scheduled)
     : it.entryId
       ? ({ pathname: '/lancar', params: { id: it.entryId } } as const)
       : null;
@@ -487,6 +589,8 @@ function DayRow({ item: it }: { item: DayItem }) {
         </Txt>
         <Txt variant="micro" t={it.overdue ? 'warning' : 'faint'} numberOfLines={1}>
           {it.category}
+          {/* In a month ahead the list spans thirty days, so each row says which one. */}
+          {it.on ? ` · dia ${Number(it.on.slice(8))}` : ''}
           {/* Late is not the same news as expected. And an inflow that never arrived is not
               overdue in the owner's sense — nobody owes it to themselves. */}
           {it.settled
@@ -499,7 +603,8 @@ function DayRow({ item: it }: { item: DayItem }) {
         </Txt>
       </View>
       <Amount
-        cents={it.direction === 'out' ? -it.amountCents : it.amountCents}
+        cents={it.amountCents}
+        direction={it.direction}
         size="body"
         tone={it.direction === 'out' ? 'negative' : 'positive'}
       />
@@ -519,6 +624,9 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { paddingTop: space.md, paddingBottom: space.xxl },
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  topSide: { flexDirection: 'row', alignItems: 'center' },
+  ask: { marginVertical: -(HIT - 22) / 2, marginLeft: space.sm, marginRight: -space.md },
+  askHit: { width: HIT, alignItems: 'center' },
   head: { paddingTop: space.xl },
   sub: { paddingTop: space.sm },
 

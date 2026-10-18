@@ -15,8 +15,14 @@ import type { Strength } from '@/lib/validation';
 
 const SEGMENTS = 4;
 
+/**
+ * Strength in ink, not in traffic-light colours. Red and green in this app mean money, and a green
+ * meter beside a password is the "green button" DESIGN.md calls a defect. The count of filled
+ * segments carries the level; the tone only steps from a caution (`warning`, the one hue here that
+ * already means "attention, not money moving") through muted to full ink.
+ */
 const toneFor = (score: number) =>
-  score <= 1 ? color.negative : score === 2 ? color.warning : color.positive;
+  score <= 1 ? color.warning : score === 2 ? color.inkMuted : color.ink;
 
 /**
  * Four hairline segments, not a progress bar or a ring. It reports what the password is worth; it
