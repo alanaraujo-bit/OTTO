@@ -1,7 +1,8 @@
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { Pool } from 'pg';
-import { assistantConfig, createAssistant, migrateAssistant, openaiClient } from './assistant.js';
+import { googleIdentity } from './google.js';
+import { assistantConfig, createAssistant, createTranscriber, migrateAssistant, openaiClient } from './assistant.js';
 
 const port = Number(process.env.PORT || 3333);
 const databaseUrl = process.env.DATABASE_URL;
@@ -64,6 +65,24 @@ function passwordMatches(password, stored) {
   const actual = scryptSync(password, salt, 64);
   const expected = Buffer.from(digest, 'hex');
   return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+async function googleUser({ sub, email, name }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let user = (await client.query('SELECT id,name,email FROM users WHERE google_sub = $1', [sub])).rows[0];
+    // Google has verified this address, so an account already registered with it is the same person.
+    user ??= (await client.query('UPDATE users SET google_sub = $1 WHERE email = $2 AND google_sub IS NULL RETURNING id,name,email', [sub, email])).rows[0];
+    if (!user) {
+      user = { id: randomUUID(), name, email };
+      await client.query('INSERT INTO users (id,name,email,google_sub) VALUES ($1,$2,$3,$4)', [user.id, user.name, user.email, sub]);
+      await client.query('INSERT INTO accounts (id,user_id,name,kind,opening_cents) VALUES ($1,$2,$3,$4,$5)', [randomUUID(), user.id, 'Conta corrente', 'checking', 0]);
+    }
+    await client.query('COMMIT');
+    return user;
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
 }
 
 async function body(request) {
@@ -186,6 +205,8 @@ async function migrate() {
       password_hash TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT UNIQUE;
+    ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT NOT NULL,
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -539,8 +560,17 @@ async function route(request, response) {
     const input = await body(request); const email = text(input.email, 254)?.toLowerCase();
     if (!email || typeof input.password !== 'string') return fail(response, 400, 'E-mail ou senha inválidos.');
     const result = await pool.query('SELECT id,name,email,password_hash FROM users WHERE email = $1', [email]); const user = result.rows[0];
+    if (user && !user.password_hash) return fail(response, 401, 'Esta conta entra com o Google.');
     if (!user || !passwordMatches(input.password, user.password_hash)) return fail(response, 401, 'E-mail ou senha incorretos.');
     return json(response, 200, { id: user.id, name: user.name, email: user.email, provider: 'password', createdAt: Date.now(), accessToken: signToken(user) });
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/auth/google') {
+    const google = await googleIdentity((await body(request)).idToken);
+    if (!google) return fail(response, 401, 'Não foi possível confirmar sua conta Google.');
+    let user;
+    try { user = await googleUser(google); }
+    catch (error) { if (error.code === '23505') return fail(response, 409, 'Este e-mail já está ligado a outra conta Google.'); throw error; }
+    return json(response, 200, { ...user, provider: 'google', createdAt: Date.now(), accessToken: signToken(user) });
   }
   const auth = request.headers.authorization?.match(/^Bearer (.+)$/i)?.[1]; const claims = auth ? verifyToken(auth) : null;
   if (!claims) return fail(response, 401, 'Sessão inválida ou expirada.');
@@ -571,6 +601,11 @@ async function route(request, response) {
     const answer = await assistant(claims.sub, await body(request));
     return json(response, answer.status, answer.body);
   }
+  if (request.method === 'POST' && url.pathname === '/v1/assistant/transcribe') {
+    // Audio, not JSON: the handler reads the stream itself, under its own cap.
+    const answer = await transcribe(claims.sub, request);
+    return json(response, answer.status, answer.body);
+  }
   if (request.method === 'GET' && url.pathname === '/v1/ledger') return json(response, 200, await readLedger(claims.sub));
   if (request.method === 'PUT' && url.pathname === '/v1/ledger') {
     const next = ledger(await body(request)); if (!next) return fail(response, 400, 'Razão inválido.');
@@ -596,7 +631,9 @@ await migrateAssistant(pool);
 // Built once at boot. With no OPENAI_API_KEY the route still answers — with a 503 the app shows as
 // "assistente ainda não configurado" — so a missing key never takes the ledger down with it.
 const assistantSettings = assistantConfig();
-const assistant = createAssistant({ pool, client: openaiClient(assistantSettings), config: assistantSettings });
+const openai = openaiClient(assistantSettings);
+const assistant = createAssistant({ pool, client: openai, config: assistantSettings });
+const transcribe = createTranscriber({ pool, client: openai, config: assistantSettings });
 const server = createServer((request, response) => route(request, response).catch((error) => { console.error(error); fail(response, 500, 'Erro interno.'); }));
 
 /*

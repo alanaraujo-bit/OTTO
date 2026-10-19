@@ -166,6 +166,31 @@ const reply = (status, body) => ({ status, body });
 const unavailable = (message, code) => reply(503, { error: message, code });
 
 /**
+ * One call against the owner's daily allowance and the global one — a chat round and a
+ * transcription alike, because both are paid from the same balance.
+ *
+ * Counted before the call, so a burst cannot slip a dozen requests past the limit while the first
+ * one is still waiting on the model.
+ */
+async function charge(pool, config, userId, day) {
+  const used = await pool.query(
+    `INSERT INTO assistant_usage (user_id, day, calls) VALUES ($1, $2, 1)
+     ON CONFLICT (user_id, day) DO UPDATE SET calls = assistant_usage.calls + 1
+     RETURNING calls`,
+    [userId, day],
+  );
+  const calls = Number(used.rows[0]?.calls ?? 1);
+  if (calls > config.perUserDaily) {
+    return { calls, refusal: reply(429, { error: 'Você chegou ao limite de conversas com o Otto por hoje. Amanhã ele volta.', code: 'assistant_daily_limit' }) };
+  }
+  const total = await pool.query('SELECT COALESCE(SUM(calls), 0) AS n FROM assistant_usage WHERE day = $1', [day]);
+  if (Number(total.rows[0]?.n ?? 0) > config.globalDaily) {
+    return { calls, refusal: unavailable('O Otto está descansando por hoje. Tente de novo amanhã.', 'assistant_global_limit') };
+  }
+  return { calls, refusal: null };
+}
+
+/**
  * Build the handler. `client` is the OpenAI client or null when no key is set; it is injected so the
  * endpoint can be exercised with a fake one and no network.
  */
@@ -182,22 +207,8 @@ export function createAssistant({ pool, client, config = assistantConfig(), now 
     const at = now();
     const day = localDay(at);
 
-    // Counted before the call, so a burst cannot slip a dozen requests past the limit while the
-    // first one is still waiting on the model.
-    const used = await pool.query(
-      `INSERT INTO assistant_usage (user_id, day, calls) VALUES ($1, $2, 1)
-       ON CONFLICT (user_id, day) DO UPDATE SET calls = assistant_usage.calls + 1
-       RETURNING calls`,
-      [userId, day],
-    );
-    const calls = Number(used.rows[0]?.calls ?? 1);
-    if (calls > config.perUserDaily) {
-      return reply(429, { error: 'Você chegou ao limite de conversas com o Otto por hoje. Amanhã ele volta.', code: 'assistant_daily_limit' });
-    }
-    const total = await pool.query('SELECT COALESCE(SUM(calls), 0) AS n FROM assistant_usage WHERE day = $1', [day]);
-    if (Number(total.rows[0]?.n ?? 0) > config.globalDaily) {
-      return unavailable('O Otto está descansando por hoje. Tente de novo amanhã.', 'assistant_global_limit');
-    }
+    const { calls, refusal } = await charge(pool, config, userId, day);
+    if (refusal) return refusal;
 
     const named = await pool.query('SELECT name FROM users WHERE id = $1', [userId]);
     const name = String(named.rows[0]?.name ?? '').slice(0, 80);
@@ -286,6 +297,104 @@ function providerFailure(error, log) {
   }
   log.error('assistant: unexpected failure');
   return reply(502, { error: 'O Otto tropeçou agora. Tente de novo.', code: 'assistant_provider' });
+}
+
+/*
+ * Dictation — the owner speaks, the composer fills.
+ *
+ * The audio comes up, is handed to the provider and dropped: nothing is written to disk or to the
+ * database, and the text goes back to the phone to be read and edited before anything is sent. It
+ * is never fed to Otto from here, because a mis-heard figure must pass under the owner's eyes first.
+ */
+
+/** OpenAI's recommended model for recorded speech in its original language. */
+export const TRANSCRIBE_MODEL = 'gpt-transcribe';
+
+/**
+ * What the recording is about, so the model spells this app's world right: money written as the app
+ * writes it, and the words a generic transcriber gets wrong ("pix", "boleto", "Otto" as a name).
+ */
+export const TRANSCRIBE_PROMPT = 'Pedido falado ao Otto, o assistente do app de finanças pessoais OTTO, em português do Brasil. Fala de gastos, receitas, saldo, contas, cartão de crédito, fatura, boleto, Pix, parcelas, dívidas, recorrências e tetos por categoria. Valores em reais escritos como R$ 25,90 ou R$ 1.234,56; datas como dia 10 ou 10 de novembro.';
+
+/** Hints, not required output — kept to terms the owner actually says, so none appears unspoken. */
+export const TRANSCRIBE_KEYWORDS = ['Otto', 'Pix', 'boleto', 'fatura', 'cartão de crédito', 'parcela', 'parcelado', 'recorrência'];
+
+/** Two minutes of mono AAC at 64 kb/s is about 1 MB; the margin covers a browser's own bitrate. */
+export const MAX_AUDIO_BYTES = 4_000_000;
+
+/** The formats the app records in, and the extension the provider identifies each one by. */
+const AUDIO_TYPES = { 'audio/mp4': 'm4a', 'audio/m4a': 'm4a', 'audio/x-m4a': 'm4a', 'audio/webm': 'webm' };
+
+/**
+ * The upload, checked at the door: a multipart form with one `audio` part, under the cap, in a
+ * format the app records. Returns `{ file }` ready for the provider, or `{ refusal }`.
+ */
+export async function readAudio(request, max = MAX_AUDIO_BYTES) {
+  const type = String(request.headers['content-type'] ?? '');
+  if (!/^multipart\/form-data;\s*boundary=/i.test(type)) {
+    return { refusal: reply(415, { error: 'Envie o áudio como formulário.' }) };
+  }
+  const tooLong = { refusal: reply(413, { error: 'Esse áudio ficou longo demais. Grave até 2 minutos.' }) };
+  if (Number(request.headers['content-length']) > max) return tooLong;
+
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    // Past the cap the rest is read and dropped rather than kept: leaving the loop early would
+    // destroy the socket, and the phone would hear a dropped connection instead of the reason.
+    if (size <= max) chunks.push(chunk);
+  }
+  if (size > max) return tooLong;
+
+  let form;
+  try {
+    form = await new Response(Buffer.concat(chunks), { headers: { 'content-type': type } }).formData();
+  } catch {
+    return { refusal: reply(400, { error: 'Não consegui ler esse áudio.' }) };
+  }
+  const audio = form.get('audio');
+  if (!(audio instanceof Blob) || audio.size === 0) return { refusal: reply(400, { error: 'Nenhum áudio chegou.' }) };
+  const mime = audio.type.split(';')[0].trim().toLowerCase();
+  const extension = AUDIO_TYPES[mime];
+  if (!extension) return { refusal: reply(415, { error: 'Formato de áudio não suportado.' }) };
+  // Renamed here: the provider reads the format off the extension, and the phone's name is not trusted.
+  return { file: new File([audio], `fala.${extension}`, { type: mime }) };
+}
+
+/** Build the dictation handler. Same injection as `createAssistant`, for the same reason. */
+export function createTranscriber({ pool, client, config = assistantConfig(), now = () => new Date(), log = console }) {
+  return async function transcribe(userId, request) {
+    if (!client) return unavailable('O assistente ainda não foi configurado.', 'assistant_unconfigured');
+
+    // Read before charging, so a malformed upload never spends the owner's allowance.
+    const audio = await readAudio(request);
+    if (audio.refusal) return audio.refusal;
+
+    const { refusal } = await charge(pool, config, userId, localDay(now()));
+    if (refusal) return refusal;
+
+    let result;
+    try {
+      result = await client.audio.transcriptions.create({
+        file: audio.file,
+        model: TRANSCRIBE_MODEL,
+        languages: ['pt'],
+        prompt: TRANSCRIBE_PROMPT,
+        keywords: TRANSCRIBE_KEYWORDS,
+      });
+    } catch (error) {
+      if (error instanceof OpenAI.BadRequestError) {
+        log.error(`transcribe: provider 400 ${error.code ?? ''}`.trim());
+        return reply(422, { error: 'Não consegui entender esse áudio. Tente gravar de novo.', code: 'transcribe_unreadable' });
+      }
+      return providerFailure(error, log);
+    }
+
+    const text = typeof result?.text === 'string' ? result.text.trim() : '';
+    if (!text) return reply(422, { error: 'Não ouvi nada nesse áudio. Tente falar de novo.', code: 'transcribe_empty' });
+    return reply(200, { text });
+  };
 }
 
 /** The real client, or null when the key is absent — which the handler reports, rather than crashing. */

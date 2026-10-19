@@ -56,7 +56,9 @@ export async function api<T>(path: string, init: RequestInit = {}, authenticated
       signal: init.signal ?? AbortSignal.timeout(TIMEOUT_MS),
       headers: {
         accept: 'application/json',
-        ...(init.body ? { 'content-type': 'application/json' } : {}),
+        // Only a string body is JSON. A FormData one — the dictation upload — needs the platform to
+        // write its own content-type, because only the platform knows the multipart boundary.
+        ...(typeof init.body === 'string' ? { 'content-type': 'application/json' } : {}),
         ...(authenticated && token ? { authorization: `Bearer ${token}` } : {}),
         ...init.headers,
       },

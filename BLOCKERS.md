@@ -3,13 +3,16 @@
 Items that need Alan. None of these stop other work — the affected part is stubbed behind an
 interface and the rest continues.
 
-## B1 — Google OAuth client ID  (Fase 1, non-blocking)
-**Status:** open
-**Needed:** an OAuth 2.0 Web + Android client ID from Google Cloud Console for the package
-`com.alanaraujo.otto`, plus the SHA-1 of the signing key.
-**Meanwhile:** the Google button is fully built and wired to `expo-auth-session`; it currently calls
-the auth provider stub, which completes a local session. Dropping the client ID into
-`src/lib/auth/config.ts` activates the real flow with no UI change.
+## B1 — Google OAuth client ID  (Fase 1)
+**Status:** resolved 2026-10-18
+**Done:** Google Cloud project `otto-512100`, Google Auth Platform (external), a Web client and an
+Android client (`com.alanaraujo.otto`, SHA-1 of `android/app/debug.keystore`, custom URI scheme on).
+IDs in `src/lib/auth/config.ts` and `api/src/google.js`; flow in `localAuth.withGoogle`, checked by
+`POST /v1/auth/google`. `npm run google` pins the token checks.
+**Watch:** the release APK is signed with `android/app/debug.keystore`, the React Native template's
+public debug key (SHA-1 `5E:8F:16:...:F6:25`). `expo prebuild --clean` regenerates the same file, so
+the SHA-1 holds. Switching to a real release key (or Play App Signing) means adding that key's SHA-1
+to the Android client first, or Google sign-in stops working on the new APK.
 
 ## B2 — Apple Sign In on Android  (Fase 1, informational)
 **Status:** open by design

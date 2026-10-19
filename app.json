@@ -2,9 +2,9 @@
   "expo": {
     "name": "OTTO",
     "slug": "otto",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "orientation": "portrait",
-    "scheme": "otto",
+    "scheme": ["otto", "com.alanaraujo.otto"],
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",
     "assetBundlePatterns": [
@@ -12,7 +12,7 @@
     ],
     "android": {
       "package": "com.alanaraujo.otto",
-      "versionCode": 3,
+      "versionCode": 4,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -74,7 +74,14 @@
         }
       ],
       "expo-web-browser",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Permita que o OTTO use o microfone para você ditar mensagens ao Otto.",
+          "enableBackgroundPlayback": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -5,6 +5,7 @@ import { router, Stack } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import * as SystemUI from 'expo-system-ui';
+import * as WebBrowser from 'expo-web-browser';
 import { NavigationBar } from 'expo-navigation-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -28,6 +29,8 @@ import { color } from '@/theme/tokens';
 
 void SplashScreen.preventAutoHideAsync();
 void SystemUI.setBackgroundColorAsync(color.bg);
+// Web: the Google sign-in popup lands back on this origin; this hands its result to the opener and closes it.
+WebBrowser.maybeCompleteAuthSession();
 
 export default function RootLayout() {
   const [fontsReady] = useFonts({

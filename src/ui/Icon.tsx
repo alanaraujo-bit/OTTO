@@ -124,6 +124,24 @@ export function NavSettings({ size = 22, tint = color.ink }: IconProps) {
   );
 }
 
+/** Dictation, for the composer: a capsule on a stand, open stroke like the rest. */
+export function Mic({ size = 22, tint = color.ink }: IconProps) {
+  return (
+    <Svg {...base(size)}>
+      <Stroke d="M9 6.5a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V20" tint={tint} />
+    </Svg>
+  );
+}
+
+/** Dismiss: two strokes, no circle — it sits beside a check, not on a toolbar. */
+export function Close({ size = 22, tint = color.ink }: IconProps) {
+  return (
+    <Svg {...base(size)}>
+      <Stroke d="m6.5 6.5 11 11m0-11-11 11" tint={tint} />
+    </Svg>
+  );
+}
+
 /** Send, for the composer: the message goes up into the transcript. */
 export function ArrowUp({ size = 22, tint = color.ink }: IconProps) {
   return (

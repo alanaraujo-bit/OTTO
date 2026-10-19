@@ -11,10 +11,12 @@
  * the real `createAssistant` and a fake OpenAI client.
  */
 import assert from 'node:assert/strict';
+import { Readable } from 'node:stream';
 import { addMonths, format } from 'date-fns';
 import OpenAI from '../api/node_modules/openai/index.mjs';
 import { READ_TOOLS, WRITE_TOOLS, TOOLS } from '../api/src/assistant-tools.js';
 import { cleanInput, createAssistant, assistantConfig, INSTRUCTIONS, DEFAULT_MODEL } from '../api/src/assistant.js';
+import { createTranscriber, readAudio, MAX_AUDIO_BYTES, TRANSCRIBE_MODEL, TRANSCRIBE_PROMPT, TRANSCRIBE_KEYWORDS } from '../api/src/assistant.js';
 import { READS, WRITES, runRead, planWrite, parseArgs, digest } from '../src/assistant/tools.ts';
 import { sampleMonth } from '../src/domain/sampleMonth.ts';
 import { balanceToday, dayKey, debtStatus, monthCurve, parseDay, project } from '../src/domain/projection.ts';
@@ -391,4 +393,75 @@ const quiet = { error: () => {} };
   assert.ok(pool.queries.filter((q) => /INSERT INTO assistant_usage/.test(q.sql)).length === 4, 'every model call is counted');
 }
 
-console.log('assistant: tools, validation and the relay loop all hold.');
+// --- 6. Dictation: the upload's door, and what reaches the transcriber ---------------------------
+
+/** A Node request as `route` hands it over, carrying a real multipart body built by the platform. */
+async function upload(parts, { headers = {}, chunked = false } = {}) {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(parts)) form.append(name, value, 'gravacao');
+  const encoded = new Request('http://otto.test', { method: 'POST', body: form });
+  const bytes = Buffer.from(await encoded.arrayBuffer());
+  const base = { 'content-type': encoded.headers.get('content-type'), ...(chunked ? {} : { 'content-length': String(bytes.length) }) };
+  // Split in two so the reader has to stitch chunks, as it does off a socket.
+  const half = Math.floor(bytes.length / 2);
+  return Object.assign(Readable.from([bytes.subarray(0, half), bytes.subarray(half)]), { headers: { ...base, ...headers } });
+}
+const m4a = new Blob([Buffer.alloc(2048, 1)], { type: 'audio/mp4' });
+
+{
+  const r = await readAudio(Object.assign(Readable.from([Buffer.from('{}')]), { headers: { 'content-type': 'application/json' } }));
+  assert.equal(r.refusal?.status, 415, 'JSON is not audio');
+  assert.equal((await readAudio(await upload({ audio: new Blob(['x'], { type: 'audio/ogg' }) }))).refusal?.status, 415, 'unrecorded formats refused');
+  assert.equal((await readAudio(await upload({ audio: new Blob([], { type: 'audio/mp4' }) }))).refusal?.status, 400, 'an empty part is refused');
+  assert.equal((await readAudio(await upload({ other: m4a }))).refusal?.status, 400, 'the part must be called audio');
+  assert.equal((await readAudio(await upload({ audio: m4a }, { headers: { 'content-length': String(MAX_AUDIO_BYTES + 1) } }))).refusal?.status, 413, 'a declared oversize is refused unread');
+  // No content-length — as a chunked upload from Android arrives — so only the running count can catch it.
+  const big = await readAudio(await upload({ audio: m4a }, { chunked: true }), 1024);
+  assert.equal(big.refusal?.status, 413, 'an undeclared oversize is caught while reading');
+
+  const ok = await readAudio(await upload({ audio: m4a }, { chunked: true }));
+  assert.ok(ok.file instanceof File);
+  assert.equal(ok.file.name, 'fala.m4a', 'renamed by the server, with the extension the provider reads');
+  assert.equal(ok.file.size, 2048, 'every byte arrives');
+  const web = await readAudio(await upload({ audio: new Blob(['webm'], { type: 'audio/webm;codecs=opus' }) }));
+  assert.equal(web.file?.name, 'fala.webm', "a browser's codec parameter is not a different format");
+}
+{
+  const requests = [];
+  let text = '  Gastei vinte e cinco e noventa no Pix.  ';
+  const client = { audio: { transcriptions: { create: async (params) => { requests.push(params); return { text }; } } } };
+  const pool = fakePool();
+  const transcribe = createTranscriber({ pool, client, config, now, log: quiet });
+
+  const r = await transcribe('u1', await upload({ audio: m4a }));
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, { text: 'Gastei vinte e cinco e noventa no Pix.' }, 'only the text goes back, trimmed');
+  assert.equal(requests[0].model, TRANSCRIBE_MODEL);
+  assert.deepEqual(requests[0].languages, ['pt']);
+  assert.equal(requests[0].language, undefined, 'never both language fields');
+  assert.equal(requests[0].prompt, TRANSCRIBE_PROMPT);
+  assert.deepEqual(requests[0].keywords, TRANSCRIBE_KEYWORDS);
+  assert.ok(TRANSCRIBE_KEYWORDS.every((k) => !/[<>\r\n]/.test(k)), 'keywords the provider would reject the whole request for');
+  assert.equal(requests[0].file.name, 'fala.m4a');
+  assert.equal(pool.queries.filter((q) => /INSERT INTO assistant_usage/.test(q.sql)).length, 1, 'a transcription is counted like a chat round');
+
+  assert.equal((await transcribe('u1', await upload({ audio: new Blob(['x'], { type: 'text/plain' }) }))).status, 415);
+  assert.equal(requests.length, 1, 'a refused upload never reaches the provider');
+  assert.equal(pool.queries.filter((q) => /INSERT INTO assistant_usage/.test(q.sql)).length, 1, 'nor spends the allowance');
+
+  text = '   ';
+  assert.equal((await transcribe('u1', await upload({ audio: m4a }))).status, 422, 'silence is said, not returned as an empty draft');
+
+  const over = await createTranscriber({ pool: fakePool({ calls: config.perUserDaily }), client, config, now, log: quiet })('u1', await upload({ audio: m4a }));
+  assert.equal(over.status, 429);
+  assert.equal(requests.length, 2, 'an over-limit dictation never reaches the provider');
+
+  const off = await createTranscriber({ pool: fakePool(), client: null, config, now, log: quiet })('u1', await upload({ audio: m4a }));
+  assert.equal(off.body.code, 'assistant_unconfigured');
+
+  const unreadable = { audio: { transcriptions: { create: async () => { throw OpenAI.APIError.generate(400, { error: { message: 'corrupt' } }, 'corrupt', new Headers()); } } } };
+  const bad = await createTranscriber({ pool: fakePool(), client: unreadable, config, now, log: quiet })('u1', await upload({ audio: m4a }));
+  assert.equal(bad.status, 422, 'audio the provider cannot read is the owner\'s to re-record, not a server fault');
+}
+
+console.log('assistant: tools, validation, the relay loop and dictation all hold.');

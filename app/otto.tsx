@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { useAudioRecorderState, type AudioRecorder } from 'expo-audio';
 import Animated, {
   FadeIn,
   useAnimatedStyle,
@@ -22,13 +23,14 @@ import { BackBar } from '@/ui/BackBar';
 import { Press } from '@/ui/Press';
 import { Button } from '@/ui/Button';
 import { Amount } from '@/ui/Amount';
-import { ArrowUp, Check } from '@/ui/Icon';
+import { ArrowUp, Check, Close, Mic } from '@/ui/Icon';
 import { Txt } from '@/theme/text';
 import { color, font, HIT, space, type } from '@/theme/tokens';
 import { useReducedMotion } from '@/theme/motion';
 import { useLedger } from '@/state/ledger';
 import { useSession } from '@/lib/auth/session';
 import { useChat, type Bubble } from '@/assistant/chat';
+import { canDictate, MAX_DICTATION_MS, useDictation } from '@/assistant/dictation';
 import { dayKey, monthCurve } from '@/domain/projection';
 
 /**
@@ -49,6 +51,10 @@ import { dayKey, monthCurve } from '@/domain/projection';
  * the owner can spend until the month ends — the same trough the Home's curve is built on — because
  * that is the question most people open this to ask, and an empty chat screen with nothing to read
  * is a wasted arrival.
+ *
+ * **Speech goes into the draft, not into the conversation.** The microphone beside Enviar records,
+ * the server transcribes, and the words are set into the input to be read and corrected — a figure
+ * mis-heard is a figure the owner must see before Otto acts on it.
  */
 export default function Otto() {
   return (
@@ -64,6 +70,9 @@ const SUGGESTIONS = [
   'Criar uma dívida',
   'Atualizar meu saldo',
 ] as const;
+
+/** The server refuses a longer message, so the input — typed or dictated — stops here. */
+const MAX_DRAFT = 2000;
 
 function OttoBody() {
   const session = useSession((s) => s.session);
@@ -85,6 +94,10 @@ function OttoBody() {
 
   const [draft, setDraft] = useState('');
   const scroll = useRef<ScrollView>(null);
+  // Dictation adds to what is already typed rather than replacing it, within the input's own limit.
+  const dictation = useDictation((text) =>
+    setDraft((d) => (d.trim() ? `${d.trimEnd()} ${text}` : text).slice(0, MAX_DRAFT)),
+  );
 
   // A conversation belongs to whoever is signed in. Another owner on this phone starts clean.
   useEffect(() => {
@@ -106,7 +119,7 @@ function OttoBody() {
 
   const submit = (text: string) => {
     const t = text.trim();
-    if (!t || thinking) return;
+    if (!t || thinking || dictation.phase !== 'idle') return;
     setDraft('');
     void send(t);
   };
@@ -209,31 +222,51 @@ function OttoBody() {
       </ScrollView>
 
       <View style={styles.composer}>
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="Pergunte ao Otto"
-          placeholderTextColor={color.inkFaint}
-          style={styles.input}
-          multiline
-          maxLength={2000}
-          selectionColor={color.ink}
-          cursorColor={color.ink}
-          accessibilityLabel="Mensagem para o Otto"
-          onSubmitEditing={() => submit(draft)}
-          submitBehavior="submit"
-          returnKeyType="send"
-        />
-        <Press
-          onPress={() => submit(draft)}
-          disabled={!canSend}
-          haptic="light"
-          style={styles.send}
-          accessibilityLabel="Enviar"
-          accessibilityState={{ disabled: !canSend }}
-        >
-          <ArrowUp tint={canSend ? color.ink : color.inkFaint} />
-        </Press>
+        {dictation.phase === 'recording' ? (
+          <Recording recorder={dictation.recorder} onCancel={dictation.cancel} onDone={dictation.finish} />
+        ) : dictation.phase === 'transcribing' ? (
+          <Transcribing />
+        ) : (
+          <>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              placeholder="Pergunte ao Otto"
+              placeholderTextColor={color.inkFaint}
+              style={styles.input}
+              multiline
+              maxLength={MAX_DRAFT}
+              selectionColor={color.ink}
+              cursorColor={color.ink}
+              accessibilityLabel="Mensagem para o Otto"
+              onSubmitEditing={() => submit(draft)}
+              submitBehavior="submit"
+              returnKeyType="send"
+            />
+            {canDictate ? (
+              <Press
+                onPress={() => void dictation.start()}
+                disabled={dictation.phase !== 'idle'}
+                haptic="light"
+                style={styles.send}
+                accessibilityLabel="Falar em vez de digitar"
+                accessibilityState={{ disabled: dictation.phase !== 'idle' }}
+              >
+                <Mic tint={color.inkMuted} />
+              </Press>
+            ) : null}
+            <Press
+              onPress={() => submit(draft)}
+              disabled={!canSend}
+              haptic="light"
+              style={styles.send}
+              accessibilityLabel="Enviar"
+              accessibilityState={{ disabled: !canSend }}
+            >
+              <ArrowUp tint={canSend ? color.ink : color.inkFaint} />
+            </Press>
+          </>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
@@ -422,6 +455,81 @@ function Typing() {
   );
 }
 
+/** Bars in the level trace: about three seconds of the voice at the recorder's 100 ms poll. */
+const BARS = 32;
+
+/** dBFS to 0–1: a quiet room sits near -60, a voice close to the phone near -10. */
+const loudness = (db: number | undefined) => (db === undefined ? 0 : Math.min(1, Math.max(0, (db + 60) / 50)));
+
+const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+/**
+ * The composer while the owner speaks: how long, how loud, and the two ways out.
+ *
+ * Loudness is drawn as a short trace of the last few seconds rather than a pulsing dot, so a voice
+ * too far from the microphone shows as a flat line before it shows as a bad transcript. It is in
+ * ink, because colour is for money; only the clock turns, in the last ten seconds before the cap.
+ * Polled here and not in the screen, so ten updates a second redraw this row and not the transcript.
+ */
+function Recording({
+  recorder,
+  onCancel,
+  onDone,
+}: {
+  recorder: AudioRecorder;
+  onCancel: () => void;
+  onDone: () => void;
+}) {
+  const state = useAudioRecorderState(recorder, 100);
+  const [trace, setTrace] = useState<number[]>(() => new Array<number>(BARS).fill(0));
+  const seconds = Math.floor(state.durationMillis / 1000);
+
+  useEffect(() => {
+    setTrace((t) => [...t.slice(1), loudness(state.metering)]);
+  }, [state]);
+
+  // The cap transcribes what was said rather than throwing it away.
+  useEffect(() => {
+    if (state.durationMillis >= MAX_DICTATION_MS) onDone();
+  }, [state.durationMillis, onDone]);
+
+  return (
+    <View style={styles.dictation}>
+      <Press onPress={onCancel} style={styles.send} accessibilityLabel="Cancelar gravação">
+        <Close tint={color.inkMuted} />
+      </Press>
+      <View style={styles.level} accessible accessibilityLabel={`Gravando, ${seconds} segundos`}>
+        <Txt variant="body" f="mono" t={state.durationMillis >= MAX_DICTATION_MS - 10_000 ? 'warning' : 'ink'} tabular>
+          {clock(seconds)}
+        </Txt>
+        <View style={styles.trace}>
+          {trace.map((v, i) => (
+            <View key={i} style={[styles.traceBar, { height: 3 + v * 19 }]} />
+          ))}
+        </View>
+      </View>
+      <Press onPress={onDone} haptic="light" style={styles.send} accessibilityLabel="Concluir e transcrever">
+        <Check size={22} tint={color.ink} />
+      </Press>
+    </View>
+  );
+}
+
+function Transcribing() {
+  return (
+    <View style={styles.dictation} accessible accessibilityLabel="Transcrevendo o áudio" accessibilityLiveRegion="polite">
+      <View style={styles.transcribing}>
+        {[0, 1, 2].map((i) => (
+          <Dot key={i} index={i} />
+        ))}
+      </View>
+      <Txt variant="body" t="muted">
+        Transcrevendo…
+      </Txt>
+    </View>
+  );
+}
+
 function Dot({ index }: { index: number }) {
   const reduced = useReducedMotion();
   const v = useSharedValue(0.35);
@@ -516,4 +624,10 @@ const styles = StyleSheet.create({
     paddingRight: space.md,
   },
   send: { width: HIT, alignItems: 'center' },
+
+  dictation: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: HIT },
+  level: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.xs },
+  trace: { flex: 1, height: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 2, overflow: 'hidden' },
+  traceBar: { width: 2, borderRadius: 1, backgroundColor: color.inkMuted },
+  transcribing: { flexDirection: 'row', alignItems: 'center', paddingLeft: space.md, paddingRight: space.sm },
 });
