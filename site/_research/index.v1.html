@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OTTO — finanças pessoais para Android</title>
+<meta name="description" content="O OTTO lê o seu mês inteiro, mostra onde você está em um olhar e avisa antes de o saldo ficar negativo. Assistente por voz, dívidas compartilhadas ao vivo. Para Android.">
+<meta name="theme-color" content="#08090B">
+<meta name="color-scheme" content="dark">
+<link rel="canonical" href="https://otto-site-one.vercel.app/">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:site_name" content="OTTO">
+<meta property="og:title" content="OTTO — a conta já está feita">
+<meta property="og:description" content="Finanças pessoais para Android: o mês inteiro numa linha, avisos antes do saldo ficar negativo e um assistente que responde com os números do seu razão.">
+<meta property="og:url" content="https://otto-site-one.vercel.app/">
+<meta property="og:image" content="https://otto-site-one.vercel.app/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="O logotipo do OTTO, dois olhos sob uma linha, e a frase: a conta já está feita.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="OTTO — a conta já está feita">
+<meta name="twitter:description" content="Finanças pessoais para Android. O mês inteiro numa linha, avisos antes do saldo ficar negativo.">
+<meta name="twitter:image" content="https://otto-site-one.vercel.app/assets/og.png">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/assets/icon-196.png" type="image/png" sizes="196x196">
+<link rel="apple-touch-icon" href="/assets/icon-196.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/styles.css">
+<script>document.documentElement.classList.add('js')</script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#conteudo">Pular para o conteúdo</a>
+
+<header class="nav" id="nav">
+  <div class="nav-in">
+    <a class="nav-mark" href="#topo" aria-label="OTTO, início da página">
+      <span class="wm" data-wordmark data-h="20"></span>
+    </a>
+    <nav class="nav-links" aria-label="Seções">
+      <a href="#mes">O mês</a>
+      <a href="#otto">Otto</a>
+      <a href="#registrar">Registrar</a>
+      <a href="#divida">Dívidas</a>
+    </nav>
+    <a class="btn btn-sm" href="https://otto-financas.vercel.app/OTTO.apk" download data-apk>
+      <span class="hide-s">Baixar para Android</span><span class="show-s">Baixar</span>
+    </a>
+  </div>
+</header>
+
+<main id="conteudo">
+
+<!-- ───────────────────────── HERO ───────────────────────── -->
+<section class="hero" id="topo" aria-labelledby="hero-title">
+  <div class="hero-light" aria-hidden="true"></div>
+  <div class="cols" aria-hidden="true"></div>
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow"><i></i>Finanças pessoais · Android</p>
+      <h1 id="hero-title" class="h1" data-lines>
+        <span class="ln"><span>A conta</span></span>
+        <span class="ln"><span>já está feita.</span></span>
+      </h1>
+      <p class="lede rv">O OTTO lê o seu mês inteiro — o que já aconteceu e o que ainda vem — e mostra onde você está em um olhar. Avisa antes de o saldo ficar negativo, não depois.</p>
+      <div class="cta-row rv">
+        <a class="btn" href="https://otto-financas.vercel.app/OTTO.apk" download data-apk>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>
+          Baixar para Android
+        </a>
+        <a class="link" href="#baixar">Como instalar o APK</a>
+      </div>
+      <p class="meta rv">Arquivo APK, direto do OTTO · fora da Play Store</p>
+    </div>
+
+    <div class="hero-stage" id="hero-stage">
+      <svg class="callouts" id="hero-callouts" aria-hidden="true"></svg>
+      <div class="callout" data-for="hero-amt"><b>Saldo hoje</b><span>tabular, ao centavo</span></div>
+      <div class="callout" data-for="hero-solid"><b>Registro</b><span>sólida: já aconteceu</span></div>
+      <div class="callout" data-for="hero-dash"><b>Previsão</b><span>tracejada: o que vem</span></div>
+      <div class="callout" data-for="hero-alert"><b>Aviso</b><span>antes, não depois</span></div>
+
+      <figure class="phone phone-hero" role="img" aria-label="Tela inicial do OTTO com dados de exemplo: saldo hoje de R$ 584,32, a curva do mês sólida até hoje e tracejada depois, saídas e entradas do mês e o aviso de que no dia 22 o saldo chega a menos R$ 323.">
+        <div class="screen"><div class="app" id="home-app" aria-hidden="true">
+          <div class="statusbar"><span data-clock>12:40</span><span class="sb-ic"><i class="sig"></i><i class="wifi"></i><i class="bat"></i></span></div>
+          <div class="a-top">
+            <span class="wm" data-wordmark data-h="22" data-watch="home"></span>
+            <span class="a-top-side"><span class="t-micro faint" data-today-long>segunda-feira, 12 de outubro</span>
+              <svg class="ico" viewBox="0 0 24 24"><path d="M4.5 6.5A2.5 2.5 0 0 1 7 4h10a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 17 16h-6.5L6 19.5V16H7a2.5 2.5 0 0 1-2.5-2.5zM8.5 10h7"/></svg></span>
+          </div>
+          <div class="a-stepper">
+            <svg class="ico" viewBox="0 0 24 24"><path d="m14.5 5.5-6.5 6.5 6.5 6.5"/></svg>
+            <span class="a-month"><b class="t-label semi" data-month-label>OUTUBRO DE 2026</b><span class="t-micro faint">mês atual</span></span>
+            <svg class="ico" viewBox="0 0 24 24"><path d="m9.5 5.5 6.5 6.5-6.5 6.5"/></svg>
+          </div>
+          <div class="a-hero" id="hero-amt">
+            <span class="amt amt-hero" data-amt="58432"><span class="sym">R$</span><span class="whole">584</span><span class="cts">,32</span></span>
+            <div class="a-hero-row"><span class="t-label muted">saldo hoje</span><span class="t-label faint"><span class="mono neg" data-net>−R$ 28,68</span> no mês até hoje</span></div>
+          </div>
+          <div class="a-plot" id="hero-plot" data-curve="hero"></div>
+          <div class="a-flow">
+            <div class="a-col"><span class="t-micro semi muted tr">SAÍDAS</span><span class="amt amt-head neg" data-flow-out><span class="sym">R$</span><span class="whole">8.336</span></span><span class="track"><i class="neg-bg" data-fill-out></i></span><span class="t-micro faint" data-flow-out-left>R$ 907 ainda por vir</span></div>
+            <i class="a-split"></i>
+            <div class="a-col"><span class="t-micro semi muted tr">ENTRADAS</span><span class="amt amt-head pos" data-flow-in><span class="sym">R$</span><span class="whole">8.600</span></span><span class="track"><i class="pos-bg" data-fill-in></i></span><span class="t-micro faint" data-flow-in-left>R$ 1.200 ainda por vir</span></div>
+          </div>
+          <div class="a-alert" id="hero-alert"><i></i><span class="t-body neg" data-trough-sentence>No dia 22 o saldo chega a −R$ 323.</span></div>
+          <div class="a-section"><i class="rule"></i><div class="a-sec-row"><span class="t-micro semi muted tr">HOJE</span><span class="t-micro faint" data-today-count>2 itens</span></div></div>
+          <div class="a-rows" data-today-rows>
+            <div class="a-row"><span><span class="t-body">Energia</span><span class="t-micro faint">Casa</span></span><span class="amt amt-body neg"><span class="sym">R$</span><span class="whole">214</span><span class="cts">,60</span></span></div>
+            <div class="a-row"><span><span class="t-body">Almoço</span><span class="t-micro faint">Alimentação</span></span><span class="amt amt-body neg"><span class="sym">R$</span><span class="whole">44</span><span class="cts">,90</span></span></div>
+          </div>
+          <div class="tabbar"><div class="tb-cap"><span class="tb-lens"></span>
+            <span class="tb-it on"><svg viewBox="0 0 24 24"><path d="M4 10.2 12 4l8 6.2V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg><b>início</b></span>
+            <span class="tb-it"><svg viewBox="0 0 24 24"><path d="M4 6.5h16M4 12h16M4 17.5h9.5"/></svg><b>razão</b></span>
+            <span class="tb-it"><svg viewBox="0 0 24 24"><path d="M5 19.5V13M12 19.5V5M19 19.5v-9"/></svg><b>análise</b></span>
+            <span class="tb-it"><svg viewBox="0 0 24 24"><path d="M4 8.5h6.5M14.5 8.5H20M4 15.5h3.5M11.5 15.5H20"/><circle cx="12.5" cy="8.5" r="2.2"/><circle cx="9.5" cy="15.5" r="2.2"/></svg><b>ajustes</b></span>
+          </div><span class="tb-plus"><svg viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></svg></span></div>
+          <i class="gesture"></i>
+        </div></div>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── TAPE ───────────────────────── -->
+<section class="tape-band" aria-label="Lançamentos de um mês de exemplo">
+  <div class="tape" id="tape" aria-hidden="true"><div class="tape-track" id="tape-track"></div></div>
+</section>
+
+<!-- ───────────────────────── O MÊS ───────────────────────── -->
+<section class="sec" id="mes" aria-labelledby="mes-title">
+  <div class="wrap sec-head">
+    <p class="eyebrow"><i></i>O mês, numa linha</p>
+    <h2 id="mes-title" class="h2" data-lines>
+      <span class="ln"><span>Um saldo sozinho</span></span>
+      <span class="ln"><span class="dim">não diz onde você está.</span></span>
+    </h2>
+    <p class="lede rv">R$ 4.800 é folga no dia 28 e aperto no dia 2, com o aluguel por pagar. Por isso o OTTO desenha o mês inteiro numa linha só: sólida até hoje, tracejada daqui pra frente. Role, e veja a conta sendo feita.</p>
+  </div>
+
+  <div class="scrub scrub-mes" id="scrub-mes">
+    <div class="pin">
+      <div class="wrap mes-stage">
+        <div class="mes-top">
+          <div class="mes-read">
+            <p class="mes-cap mono" id="mes-cap">saldo no dia 01</p>
+            <p class="mes-num" id="mes-num" aria-live="off"><span class="sym">R$</span><span class="whole">2.320</span><span class="cts">,71</span></p>
+          </div>
+          <div class="mes-event" id="mes-event" aria-hidden="true"></div>
+        </div>
+        <div class="mes-chart" id="mes-chart" role="img" aria-label="Curva do saldo de um mês de exemplo. Sólida até o dia 12, hoje, com saldo de R$ 584,32. Tracejada depois: no dia 22 o empréstimo pessoal leva o saldo a menos R$ 323,06; no dia 28 entra um freela de R$ 1.200 e o mês fecha em R$ 876,94."></div>
+        <div class="mes-foot">
+          <div class="mes-say" aria-hidden="true">
+            <p data-say="0">Sólido: o que já aconteceu.</p>
+            <p data-say="1">Hoje.</p>
+            <p data-say="2">Tracejado: o que vem. Cada degrau é uma conta, no dia dela.</p>
+            <p data-say="3" class="neg">No dia 22 o saldo chega a −R$&nbsp;323.</p>
+          </div>
+          <span class="tag mono">Mês de exemplo</span>
+        </div>
+        <div class="notif" id="mes-notif" aria-hidden="true">
+          <img src="/assets/icon-196.png" alt="" width="20" height="20">
+          <div><p class="n-app">OTTO · agora</p><p class="n-title">Dia 22: seu saldo fica negativo</p><p class="n-body">Empréstimo pessoal deixa você em −R$&nbsp;323. Ainda dá tempo de mexer nisso.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="wrap after-mes">
+    <p class="aside rv"><span class="mono faint">AVISOS</span> O OTTO só fala quando sabe algo que você não sabe. “O aluguel vence amanhã” você já sabe. “Amanhã o aluguel deixa seu saldo negativo” não dá para saber sem abrir o app — então o OTTO avisa.</p>
+  </div>
+</section>
+
+<!-- ───────────────────────── OTTO ───────────────────────── -->
+<section class="sec sec-otto" id="otto" aria-labelledby="otto-title">
+  <div class="cols" aria-hidden="true"></div>
+  <div class="wrap otto-intro">
+    <p class="eyebrow"><i></i>Otto, o assistente</p>
+    <h2 class="h2" data-lines>
+      <span class="ln"><span>Pergunte.</span></span>
+      <span class="ln"><span class="dim">Ele já fez a conta.</span></span>
+    </h2>
+    <p class="lede rv">Fale ou escreva. O Otto responde com os números do próprio razão — os mesmos da tela inicial, ao centavo. E quando é para mudar alguma coisa, mostra tudo antes: nada é gravado sem o seu Confirmar.</p>
+  </div>
+  <div class="scrub scrub-otto" id="scrub-otto">
+    <div class="pin">
+      <div class="wrap otto-grid">
+        <div class="otto-copy">
+          <p class="eyebrow"><i></i>Otto, o assistente</p>
+          <h2 id="otto-title" class="h2" data-lines>
+            <span class="ln"><span>Pergunte.</span></span>
+            <span class="ln"><span class="dim">Ele já fez a conta.</span></span>
+          </h2>
+          <p class="lede rv">Fale ou escreva. O Otto responde com os números do próprio razão — os mesmos da tela inicial, ao centavo. E quando é para mudar alguma coisa, mostra tudo antes: nada é gravado sem o seu Confirmar.</p>
+          <ol class="steps" id="otto-steps">
+            <li><span class="n mono">01</span><span class="s"><b>Você fala</b><em>O microfone grava, o servidor transcreve.</em></span><i class="bar"></i></li>
+            <li><span class="n mono">02</span><span class="s"><b>O texto cai no rascunho</b><em>Você lê e corrige antes de enviar. Um valor mal ouvido não vira lançamento.</em></span><i class="bar"></i></li>
+            <li><span class="n mono">03</span><span class="s"><b>Otto mostra antes de mudar</b><em>Valor, descrição, categoria, cartão e data, entre duas linhas.</em></span><i class="bar"></i></li>
+            <li><span class="n mono">04</span><span class="s"><b>Você confirma</b><em>Só então o lançamento entra no razão.</em></span><i class="bar"></i></li>
+            <li><span class="n mono">05</span><span class="s"><b>E pergunta o que quiser</b><em>Quanto devo mês que vem? Quanto posso gastar?</em></span><i class="bar"></i></li>
+          </ol>
+        </div>
+        <div class="otto-side">
+          <div class="otto-now" id="otto-now" aria-hidden="true"><p><span class="mono">01</span><b>Você fala</b></p><em>O microfone grava, o servidor transcreve.</em></div>
+          <div class="otto-dev">
+          <figure class="phone phone-otto" role="img" aria-label="Tela do Otto com dados de exemplo. Você dita: gastei 42 e 90 no almoço, no nubank. O Otto mostra um cartão de confirmação para registrar um gasto de R$ 42,90 em Alimentação no cartão Nubank. Você confirma: feito. Depois pergunta quanto pode gastar até o fim do mês, e o Otto responde que no dia 22 o empréstimo pessoal leva o saldo a menos R$ 323,06, e que o freela de R$ 1.200 só entra no dia 28.">
+            <div class="screen"><div class="app" id="otto-app" aria-hidden="true">
+              <div class="statusbar"><span data-clock>12:40</span><span class="sb-ic"><i class="sig"></i><i class="wifi"></i><i class="bat"></i></span></div>
+              <div class="o-bar">
+                <svg class="ico" viewBox="0 0 24 24"><path d="M19 12H5m0 0 6-6m-6 6 6 6"/></svg>
+                <b class="t-body semi">Otto</b>
+                <span class="t-label muted o-new" id="o-new">Nova conversa</span>
+              </div>
+              <div class="o-scroll" id="o-scroll"><div class="o-feed" id="o-feed">
+                <div class="o-empty" id="o-empty">
+                  <span class="amt amt-hero neg"><span class="sym">−R$</span><span class="whole">323</span><span class="cts">,06</span></span>
+                  <span class="t-label muted">o mês fica negativo nesse ponto</span>
+                  <b class="t-heading semi o-greet">Oi, Alan.</b>
+                  <span class="t-body muted">Pergunte qualquer coisa sobre o seu dinheiro no OTTO, ou peça para eu registrar, pagar, adiar ou corrigir algo. Eu mostro antes de mudar qualquer coisa.</span>
+                  <span class="o-sugs"><span class="t-body">Quanto devo mês que vem?</span><span class="t-body">Quanto posso gastar este mês?</span><span class="t-body">Criar uma dívida</span></span>
+                </div>
+                <div class="o-msg o-user" data-o="u1"><span class="t-body muted">gastei 42 e 90 no almoço, no nubank</span></div>
+                <div class="o-typing" data-o="t1"><i></i><i></i><i></i></div>
+                <div class="o-card" data-o="card">
+                  <i class="o-rule"></i>
+                  <span class="t-micro semi muted tr" id="o-card-label">CONFIRMAR · REGISTRAR GASTO</span>
+                  <span class="o-lines">
+                    <span class="o-line"><span class="t-label faint">Valor</span><span class="t-body mono neg">R$ 42,90</span></span>
+                    <span class="o-line"><span class="t-label faint">Descrição</span><span class="t-body">Almoço</span></span>
+                    <span class="o-line"><span class="t-label faint">Categoria</span><span class="t-body">Alimentação</span></span>
+                    <span class="o-line"><span class="t-label faint">Cartão</span><span class="t-body">Nubank</span></span>
+                    <span class="o-line"><span class="t-label faint">Data</span><span class="t-body mono">hoje, 12:40</span></span>
+                  </span>
+                  <span class="t-micro faint o-note">No cartão: entra na fatura e não mexe no saldo de hoje.</span>
+                  <span class="o-actions" id="o-actions"><span class="o-btn" id="o-confirm">Confirmar</span><span class="t-label faint o-cancel">Cancelar</span></span>
+                  <span class="o-done" id="o-done"><svg viewBox="0 0 24 24"><path d="m4 12.5 5 5L20 6.5"/></svg><span class="t-label">Feito.</span></span>
+                  <i class="o-rule o-rule-b"></i>
+                </div>
+                <div class="o-msg o-user" data-o="u2"><span class="t-body muted">e quanto posso gastar até o fim do mês?</span></div>
+                <div class="o-typing" data-o="t2"><i></i><i></i><i></i></div>
+                <div class="o-msg o-otto" data-o="a2"><span class="t-body">Do jeito que está, nada: no dia 22 o Empréstimo pessoal leva seu saldo a <span class="mono neg">−R$&nbsp;323,06</span>.</span><span class="t-body o-p">O Freela de <span class="mono">R$&nbsp;1.200,00</span> só entra no dia 28 — dali até o fim do mês sobram <span class="mono">R$&nbsp;876,94</span>.</span></div>
+              </div></div>
+              <div class="o-composer" id="o-composer">
+                <div class="o-input" id="o-input"><span class="o-ph t-body faint" id="o-ph">Pergunte ao Otto</span><span class="o-line"><span class="t-body" id="o-draft"></span><i class="caret" id="o-caret"></i></span></div>
+                <span class="o-ic"><svg viewBox="0 0 24 24"><path d="M9 6.5a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V20"/></svg></span>
+                <span class="o-ic" id="o-send"><svg viewBox="0 0 24 24"><path d="M12 19V5m0 0-6 6m6-6 6 6"/></svg></span>
+                <div class="o-rec" id="o-rec">
+                  <span class="o-ic"><svg viewBox="0 0 24 24"><path d="m6.5 6.5 11 11m0-11-11 11"/></svg></span>
+                  <span class="t-body mono" id="o-clock">0:00</span>
+                  <span class="o-trace" id="o-trace"></span>
+                  <span class="o-ic ink"><svg viewBox="0 0 24 24"><path d="m4 12.5 5 5L20 6.5"/></svg></span>
+                </div>
+                <div class="o-trans" id="o-trans"><span class="o-typing on"><i></i><i></i><i></i></span><span class="t-body muted">Transcrevendo…</span></div>
+              </div>
+              <i class="gesture"></i>
+            </div></div>
+          </figure>
+          <pre class="trace mono" id="otto-trace" aria-hidden="true"><b>› mes</b>
+  menor_saldo_previsto
+    <i>−R$ 323,06 · dia 22</i>
+  saldo_fim_do_mes
+    <i>R$ 876,94</i>
+<span>Por baixo, o Otto consulta o mesmo motor de projeção da tela inicial.</span></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── REGISTRAR ───────────────────────── -->
+<section class="sec sec-reg" id="registrar" aria-labelledby="reg-title">
+  <div class="wrap reg-grid">
+    <div class="reg-copy">
+      <p class="eyebrow"><i></i>Registrar</p>
+      <h2 id="reg-title" class="h2" data-lines>
+        <span class="ln"><span>Anotar leva menos</span></span>
+        <span class="ln"><span class="dim">que lembrar de anotar.</span></span>
+      </h2>
+      <p class="lede rv">Um teclado feito só para dinheiro. Os dígitos entram pela direita e os centavos se ajeitam sozinhos — sem vírgula, sem o teclado do sistema pulando na tela. Valor, categoria, pronto. Muitas vezes, ainda na fila do caixa.</p>
+      <p class="hint mono rv"><span class="hide-s">Experimente: digite um valor no teclado do computador ou clique nos números.</span><span class="show-s">Experimente: toque nos números do celular ao lado.</span></p>
+    </div>
+    <div class="reg-side">
+      <div class="phone phone-reg">
+        <div class="screen"><div class="app" id="reg-app">
+          <div class="statusbar" aria-hidden="true"><span data-clock>12:40</span><span class="sb-ic"><i class="sig"></i><i class="wifi"></i><i class="bat"></i></span></div>
+          <div class="r-back" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24"><path d="M19 12H5m0 0 6-6m-6 6 6 6"/></svg></div>
+          <div class="r-seg" aria-hidden="true"><span class="on neg">SAÍDA</span><span>ENTRADA</span></div>
+          <p class="r-read" aria-live="polite" aria-atomic="true"><span class="visually-hidden">Valor: </span><span class="sym">R$</span><span class="whole" id="r-whole">0</span><span class="cts" id="r-cts">,00</span></p>
+          <div class="r-sum" aria-hidden="true">
+            <span class="r-cell"><span class="t-micro semi muted tr">CATEGORIA</span><span class="t-body" id="r-cat">Outros</span></span>
+            <span class="r-cell"><span class="t-micro semi muted tr">CONTA</span><span class="t-body">Conta corrente</span></span>
+          </div>
+          <div class="r-chips" id="r-chips" role="group" aria-label="Categoria">
+            <button type="button" data-cat="Mercado">Mercado</button>
+            <button type="button" data-cat="Alimentação">Alimentação</button>
+            <button type="button" data-cat="Transporte">Transporte</button>
+            <button type="button" data-cat="Casa">Casa</button>
+          </div>
+          <div class="r-field" aria-hidden="true"><span class="t-label faint">Descrição</span><span class="t-body faint" id="r-desc">Opcional · fica “Outros”</span></div>
+          <div class="r-keys" id="r-keys" role="group" aria-label="Teclado numérico">
+            <button type="button" data-k="1">1</button><button type="button" data-k="2">2</button><button type="button" data-k="3">3</button>
+            <button type="button" data-k="4">4</button><button type="button" data-k="5">5</button><button type="button" data-k="6">6</button>
+            <button type="button" data-k="7">7</button><button type="button" data-k="8">8</button><button type="button" data-k="9">9</button>
+            <button type="button" data-k="00">00</button><button type="button" data-k="0">0</button>
+            <button type="button" data-k="del" aria-label="Tirar o último dígito"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5.5h10a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5.5-6.5z"/><path d="m11.5 9.5 5 5m0-5-5 5"/></svg></button>
+          </div>
+          <button type="button" class="r-go" id="r-go">Lançar saída</button>
+          <div class="r-snack" id="r-snack" role="status"></div>
+          <i class="gesture" aria-hidden="true"></i>
+        </div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── CATEGORIAS ───────────────────────── -->
+<section class="sec" id="categorias" aria-labelledby="cat-title">
+  <div class="scrub scrub-cat" id="scrub-cat">
+    <div class="pin">
+      <canvas class="cat-canvas" id="cat-canvas" aria-hidden="true"></canvas>
+      <div class="wrap cat-grid">
+        <div class="cat-copy">
+          <p class="eyebrow"><i></i>Para onde foi</p>
+          <h2 id="cat-title" class="h2" data-lines>
+            <span class="ln"><span>O teto só aparece</span></span>
+            <span class="ln"><span class="dim">quando estoura.</span></span>
+          </h2>
+          <p class="lede rv">Cada categoria no anel, na proporção do mês. Um teto que está segurando não desenha nada. Passou do teto? O arco ganha um corte no ponto exato, e o excesso vem em vermelho, em escala.</p>
+          <p class="aside rv"><span class="mono faint">TETOS</span> E o teto é lido por dia que falta: restam R$ 60 para 9 dias — R$ 6,66 por dia. Um número que dá para guardar de cabeça no caixa.</p>
+        </div>
+        <div class="cat-ring">
+          <ul class="cat-legend-top mono" id="cat-legend-top" aria-hidden="true"></ul>
+          <div class="donut" id="donut">
+            <svg viewBox="0 0 208 208" id="donut-svg" role="img" aria-label="Anel de saídas dos últimos 30 dias, dados de exemplo: Moradia 48%, Mercado 15%, Transporte 7%, Alimentação 8%, 38% acima do teto, e demais 22%."></svg>
+            <div class="donut-mid" id="donut-mid" aria-hidden="true"></div>
+          </div>
+          <div class="legend" id="legend"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── DÍVIDA ───────────────────────── -->
+<section class="sec sec-divida" id="divida" aria-labelledby="div-title">
+  <div class="cols" aria-hidden="true"></div>
+  <div class="wrap div-grid">
+    <div class="div-copy">
+      <p class="eyebrow"><i></i>Dívida compartilhada</p>
+      <h2 id="div-title" class="h2" data-lines>
+        <span class="ln"><span>Dois lados.</span></span>
+        <span class="ln"><span class="dim">A mesma conta.</span></span>
+      </h2>
+      <p class="lede rv">Mande um link para quem está do outro lado. A pessoa acompanha as parcelas ao vivo, pelo navegador — e só isso: nenhuma conta bancária, nenhum outro lançamento. Se ela também usa o OTTO, adiciona a dívida às próprias recorrências com um toque.</p>
+      <div class="div-try rv">
+        <p class="mono faint">Experimente, do lado de quem compartilhou:</p>
+        <div class="div-btns">
+          <button type="button" class="btn btn-ghost" id="d-pay">Registrar parcela</button>
+          <button type="button" class="btn btn-ghost btn-danger" id="d-revoke">Revogar o link</button>
+        </div>
+      </div>
+    </div>
+    <div class="div-stage" id="div-stage">
+      <svg class="callouts" id="div-callouts" aria-hidden="true"></svg>
+      <div class="callout" data-for="d-live"><b>Ao vivo</b><span>relê a cada 15 segundos</span></div>
+      <div class="callout" data-for="d-ticks"><b>Parcelas</b><span>contadas, não em %</span></div>
+      <div class="callout" data-for="d-url"><b>Link</b><span>longo, privado, revogável</span></div>
+      <div class="phone phone-div">
+        <div class="screen"><div class="app web" id="div-app">
+          <div class="statusbar" aria-hidden="true"><span data-clock>12:40</span><span class="sb-ic"><i class="sig"></i><i class="wifi"></i><i class="bat"></i></span></div>
+          <div class="urlbar" id="d-url" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7.5 10.5V8a4.5 4.5 0 0 1 9 0v2.5M6 10.5h12v9H6z"/></svg><span>otto-financas.vercel.app/divida/k7Qe…</span></div>
+          <div class="d-page" id="d-page" aria-live="polite">
+            <div class="d-live" id="d-live"><i></i><span class="t-micro semi muted tr" id="d-live-word">AO VIVO</span></div>
+            <div class="d-ok" id="d-ok">
+              <p class="t-body muted">Alan deve a Gabriel</p>
+              <p class="t-title semi">Notebook</p>
+              <p class="amt amt-hero" id="d-left"><span class="sym">R$</span><span class="whole">2.041</span><span class="cts">,20</span></p>
+              <p class="t-label muted">ainda em aberto</p>
+              <i class="rule"></i>
+              <div class="d-ph"><span class="t-micro semi muted">PARCELAS</span><span class="t-label mono" id="d-count">3/10</span></div>
+              <div class="d-ticks" id="d-ticks"></div>
+              <div class="d-facts">
+                <div><span class="t-label faint">cada parcela</span><span class="t-body mono muted">R$ 291,60</span></div>
+                <div><span class="t-label faint">próxima parcela</span><span class="t-body muted" id="d-next">10 de novembro</span></div>
+                <div><span class="t-label faint">termina</span><span class="t-body muted" id="d-end">maio de 2027</span></div>
+              </div>
+              <div class="d-pays"><i class="rule"></i><div class="d-ph"><span class="t-micro semi muted">PAGAMENTOS</span><span class="t-micro semi muted">SEMPRE NO PRAZO</span></div><div id="d-pays"></div></div>
+              <p class="t-label muted d-priv">Link privado e revogável. Nenhuma conta bancária ou outro lançamento é compartilhado.</p>
+            </div>
+            <div class="d-gone" id="d-gone">
+              <p class="t-title semi">Este link não está mais ativo.</p>
+              <p class="t-body muted">Peça um novo link para a pessoa que compartilhou a dívida.</p>
+            </div>
+          </div>
+          <i class="gesture" aria-hidden="true"></i>
+        </div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── RECURSOS ───────────────────────── -->
+<section class="sec sec-list" id="recursos" aria-labelledby="list-title">
+  <div class="wrap">
+    <p class="eyebrow"><i></i>E o resto do razão</p>
+    <h2 id="list-title" class="h2" data-lines>
+      <span class="ln"><span>Tudo o que um mês tem.</span></span>
+      <span class="ln"><span class="dim">Nada que ele não tem.</span></span>
+    </h2>
+    <ol class="ledger" id="ledger">
+      <li class="lg-row">
+        <span class="lg-n mono">01</span>
+        <div class="lg-t"><h3>Razão</h3><p>Uma fita contínua, sem corte no fim do mês. A régua de cada dia gruda no topo e carrega o saldo naquele ponto — sólida no que aconteceu, tracejada no que vem.</p></div>
+        <div class="lg-v v-razao" aria-hidden="true">
+          <div class="vr-rule"><span class="mono">TER 13</span><span class="mono">R$ 584,32</span></div>
+          <div class="vr-row"><span>Notebook · 6/12</span><span class="mono neg">R$ 291,58</span></div>
+          <div class="vr-rule dash"><span class="mono">QUA 14</span><span class="mono">R$ 292,74</span></div>
+          <div class="vr-row"><span>Academia</span><span class="mono neg">R$ 119,00</span></div>
+        </div>
+      </li>
+      <li class="lg-row">
+        <span class="lg-n mono">02</span>
+        <div class="lg-t"><h3>Análise</h3><p>“Isso é normal?” Cada categoria comparada com a sua própria mediana, no mesmo dia do mês. Com menos de dois meses para comparar, o OTTO diz que ainda não sabe.</p></div>
+        <div class="lg-v v-pace" aria-hidden="true">
+          <div><span>Mercado</span><i style="--w:.62;--m:.7"></i></div>
+          <div><span>Alimentação</span><i style="--w:.84;--m:.58"></i></div>
+          <div><span>Transporte</span><i style="--w:.38;--m:.5"></i></div>
+        </div>
+      </li>
+      <li class="lg-row">
+        <span class="lg-n mono">03</span>
+        <div class="lg-t"><h3>Recorrências</h3><p>O Spotify não custa R$ 21,90. Custa R$ 262,80 por ano — o número que faz alguém cancelar. Dívidas contadas em parcelas: quantas faltam e quando acabam.</p></div>
+        <div class="lg-v v-rec" aria-hidden="true">
+          <span class="mono vr-a">R$ 21,90<small>/mês</small></span>
+          <span class="mono vr-b">R$ 262,80<small>/ano</small></span>
+        </div>
+      </li>
+      <li class="lg-row">
+        <span class="lg-n mono">04</span>
+        <div class="lg-t"><h3>Contas e cartões</h3><p>Linha de crédito não é dinheiro: o saldo conta só o que você tem. Cada cartão carrega o ciclo — sólido até hoje, tracejado até o fechamento, depois até o vencimento.</p></div>
+        <div class="lg-v v-card" aria-hidden="true">
+          <div class="vc-line"><i class="s"></i><i class="d"></i><i class="d2"></i></div>
+          <div class="vc-lab mono"><span>hoje</span><span>fecha 28</span><span>vence 10</span></div>
+        </div>
+      </li>
+      <li class="lg-row">
+        <span class="lg-n mono">05</span>
+        <div class="lg-t"><h3>Calendário</h3><p>O mês em dias, com o que entra e o que sai em cada um. Toque num aviso de “fatura vence amanhã” e ele abre exatamente nesse dia.</p></div>
+        <div class="lg-v v-cal" aria-hidden="true" id="v-cal"></div>
+      </li>
+      <li class="lg-row">
+        <span class="lg-n mono">06</span>
+        <div class="lg-t"><h3>Avisos</h3><p>Três níveis, e nenhum lembrete vazio. Essencial: só quando o saldo pode ficar negativo ou um teto não chega ao fim do mês. Planejamento e Completo acrescentam faturas e o resumo de amanhã.</p></div>
+        <div class="lg-v v-notif" aria-hidden="true">
+          <span class="on">Essencial</span><span>Planejamento</span><span>Completo</span>
+        </div>
+      </li>
+      <li class="lg-row">
+        <span class="lg-n mono">07</span>
+        <div class="lg-t"><h3>Trinco</h3><p>Bloqueio por biometria. Com o trinco ligado, o OTTO fecha os olhos quando você sai — e abre quando o sensor reconhece você.</p></div>
+        <div class="lg-v v-lock" aria-hidden="true"><span class="wm" data-wordmark data-h="34" data-sleep></span></div>
+      </li>
+      <li class="lg-row">
+        <span class="lg-n mono">08</span>
+        <div class="lg-t"><h3>Privado por padrão</h3><p>Cada razão pertence a uma pessoa. Entre com Google ou com e-mail; só uma dívida que você escolhe compartilhar sai dele, por um link que você revoga quando quiser.</p></div>
+        <div class="lg-v v-priv mono" aria-hidden="true"><span>1 razão</span><i></i><span>1 dono</span></div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ───────────────────────── BAIXAR ───────────────────────── -->
+<section class="sec sec-end" id="baixar" aria-labelledby="end-title">
+  <div class="end-light" aria-hidden="true"></div>
+  <div class="wrap end">
+    <span class="wm wm-big" data-wordmark data-h="96" data-big></span>
+    <h2 id="end-title" class="h2 h2-end" data-lines>
+      <span class="ln"><span>Seu mês,</span></span>
+      <span class="ln"><span class="dim">com a conta feita.</span></span>
+    </h2>
+    <div class="end-cta rv">
+      <a class="btn btn-lg" href="https://otto-financas.vercel.app/OTTO.apk" download data-apk>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>
+        Baixar para Android
+      </a>
+      <div class="qr hide-s">
+        <img src="/assets/qr-apk.svg" width="96" height="96" alt="Código QR com o link de download do OTTO para Android">
+        <span class="mono faint">No computador?<br>Aponte a câmera<br>do celular.</span>
+      </div>
+    </div>
+    <div class="install rv">
+      <p class="mono faint">COMO INSTALAR</p>
+      <ol>
+        <li><span class="mono">01</span><span>Baixe o arquivo <span class="mono">OTTO.apk</span> no celular.</span></li>
+        <li><span class="mono">02</span><span>Abra o arquivo. Se o Android pedir, permita instalar apps desta fonte — é uma autorização do sistema para arquivos fora da Play Store.</span></li>
+        <li><span class="mono">03</span><span>Instale, abra e entre com Google ou e-mail.</span></li>
+      </ol>
+      <p class="faint small">O OTTO é distribuído direto, como arquivo APK, fora da Play Store. Por enquanto, só para Android.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <div class="foot-brand">
+      <span class="wm" data-wordmark data-h="18"></span>
+      <p class="faint">Finanças pessoais para Android.</p>
+    </div>
+    <nav class="foot-links" aria-label="Rodapé">
+      <a href="https://otto-financas.vercel.app/OTTO.apk" download data-apk>Baixar o APK</a>
+      <a href="#baixar">Como instalar</a>
+      <a href="https://otto-financas.vercel.app/privacidade">Privacidade</a>
+    </nav>
+  </div>
+  <div class="wrap foot-legal"><span class="mono faint">© 2026 OTTO</span><span class="mono faint">Dados nas telas são de exemplo.</span></div>
+</footer>
+</body>
+</html>

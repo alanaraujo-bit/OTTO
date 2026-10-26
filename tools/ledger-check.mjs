@@ -13,6 +13,7 @@ import {
   balanceToday,
   monthCurve as monthCurveWith,
   spendByCategory,
+  incomeByCategory,
   debtStatus,
   upcoming as upcomingWith,
   dayItems as dayItemsWith,
@@ -291,6 +292,20 @@ check('spend by category counts outflow only, inside the window', () => {
   ];
   assert.deepEqual(spendByCategory(entries, '2026-09-01', '2026-09-02', new Set()), [
     { category: 'Mercado', cents: 4000 },
+  ]);
+});
+
+check('income by category counts inflow only, inside the window, largest first', () => {
+  const entries = [
+    entry({ id: '1', date: '2026-09-01', amountCents: 1000 }),
+    entry({ id: '2', date: '2026-09-02', amountCents: 5000, direction: 'in', category: 'Freela' }),
+    entry({ id: '3', date: '2026-09-02', amountCents: 9999, direction: 'in', category: 'Renda' }),
+    entry({ id: '4', date: '2026-09-01', amountCents: 1, direction: 'in', category: 'Freela' }),
+    entry({ id: '5', date: '2026-08-30', amountCents: 7777, direction: 'in', category: 'Renda' }),
+  ];
+  assert.deepEqual(incomeByCategory(entries, '2026-09-01', '2026-09-02'), [
+    { category: 'Renda', cents: 9999 },
+    { category: 'Freela', cents: 5001 },
   ]);
 });
 
@@ -1370,6 +1385,16 @@ check('o dia em que ja estourou e lido do razao, nao do ritmo', () => {
   assert.equal(r.burstsOn, '2026-09-11', 'o dia real da travessia, nao um estimado');
   assert.equal(r.leftCents, -3000);
   assert.equal(r.perDayCents, 0, 'nao sobra nada por dia depois de estourar');
+});
+
+check('o teto acha a categoria sem ligar para maiusculas nem espacos', () => {
+  const es = [
+    spentOn('2026-09-02', 10000, 'alimentação '),
+    spentOn('2026-09-03', 25000, 'Alimentação'),
+  ];
+  const r = capReading({ category: 'Alimentação', capCents: 30000 }, es, [], '2026-09-20');
+  assert.equal(r.spent, 35000, 'as duas grafias sao a mesma categoria');
+  assert.equal(r.burstsOn, '2026-09-03', 'e a travessia tambem soma as duas');
 });
 
 check('quanto ainda da para gastar por dia', () => {

@@ -56,3 +56,12 @@ builds/
 # link does not need this file in git — and a 60 MB binary in history is paid for by every clone,
 # forever, on every rebuild that changes one byte of it.
 public/OTTO.apk
+.env*
+
+# heavy motion renders: regenerable, and GitHub rejects files over 100 MB
+marketing/motion/**/*.mp4
+marketing/motion/**/*.avi
+marketing/motion/**/*.mov
+marketing/motion/**/*.webm
+
+.playwright-cli/

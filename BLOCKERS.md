@@ -9,6 +9,10 @@ interface and the rest continues.
 Android client (`com.alanaraujo.otto`, SHA-1 of `android/app/debug.keystore`, custom URI scheme on).
 IDs in `src/lib/auth/config.ts` and `api/src/google.js`; flow in `localAuth.withGoogle`, checked by
 `POST /v1/auth/google`. `npm run google` pins the token checks.
+**Play (2026-10-24):** release AABs are signed with the upload key `~/.otto-keys/otto-upload.jks`
+(SHA-1 `63:55:0D:…:3F:57`, credentials in `~/.gradle/gradle.properties`), and Play re-signs with its
+app signing key (SHA-1 `C8:19:FB:…:EE:B8`). Both have their own Android client in `otto-512100`.
+Back up the `.jks`: losing it means asking Play support for an upload key reset.
 **Watch:** the release APK is signed with `android/app/debug.keystore`, the React Native template's
 public debug key (SHA-1 `5E:8F:16:...:F6:25`). `expo prebuild --clean` regenerates the same file, so
 the SHA-1 holds. Switching to a real release key (or Play App Signing) means adding that key's SHA-1

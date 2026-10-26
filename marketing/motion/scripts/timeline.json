@@ -1,0 +1,20 @@
+{
+  "fps": 30,
+  "bpm": 120,
+  "framesPerBeat": 15,
+  "duration": 900,
+  "scenes": {
+    "s1_numeral": [0, 120],
+    "s2_home": [120, 240],
+    "s3_curve": [240, 360],
+    "s4_lancar": [360, 480],
+    "s5_montage": [480, 600],
+    "s6_otto": [600, 720],
+    "s7_end": [720, 900]
+  },
+  "keys": [375, 390, 405, 420],
+  "montageCuts": [480, 510, 540, 570],
+  "ottoTyping": [618, 676],
+  "wordmarkBlink": [822, 858],
+  "impacts": [120, 240, 360, 480, 600, 720]
+}

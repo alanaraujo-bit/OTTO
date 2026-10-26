@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600&family=Geist+Mono:wght@400;600&display=swap">
+<style>
+  html,body{margin:0;width:1200px;height:630px;background:#08090B;color:#F2F4F7;font-family:Geist,sans-serif;overflow:hidden}
+  .s{position:relative;width:1200px;height:630px;background:
+    radial-gradient(70% 70% at 50% -15%, rgba(242,244,247,.13), transparent 60%),
+    radial-gradient(40% 70% at 100% 60%, rgba(255,239,216,.07), transparent 70%)}
+  .cols{position:absolute;inset:0 80px;background:linear-gradient(to right, rgba(255,255,255,.05) 1px, transparent 1px) 0 0/calc(100%/6) 100%;
+    -webkit-mask-image:linear-gradient(to bottom,transparent,#000 20%,#000 80%,transparent)}
+  .mark{position:absolute;left:80px;top:84px}
+  h1{position:absolute;left:80px;top:196px;margin:0;font-size:76px;line-height:.92;letter-spacing:-.055em;font-weight:600}
+  h1 span{color:#9BA1AC}
+  .k{position:absolute;left:84px;bottom:74px;font-family:'Geist Mono',monospace;font-size:17px;letter-spacing:.08em;color:#9BA1AC;text-transform:uppercase}
+  .curve{position:absolute;right:70px;top:150px}
+  .num{position:absolute;right:80px;top:84px;font-family:'Geist Mono',monospace;display:flex;align-items:flex-end}
+  .num b{font-size:64px;font-weight:600;letter-spacing:-.05em;line-height:.9}
+  .num i{font-style:normal;color:#737B88;font-size:20px;padding:0 6px 8px}
+</style></head>
+<body><div class="s"><div class="cols"></div>
+  <svg class="mark" width="233" height="60" viewBox="0 0 388 100"><g fill="none" stroke="#F2F4F7" stroke-width="9"><circle cx="50" cy="50" r="45.5"/><line x1="158" y1="0" x2="158" y2="100"/><line x1="230" y1="0" x2="230" y2="100"/><circle cx="338" cy="50" r="45.5"/><line x1="122" y1="4.5" x2="266" y2="4.5"/></g><ellipse cx="56" cy="54" rx="13" ry="13" fill="#F2F4F7"/><ellipse cx="344" cy="54" rx="13" ry="13" fill="#F2F4F7"/></svg>
+  <h1>Veja hoje como o<br><span>seu mês vai fechar.</span></h1>
+  <div class="num"><i>R$</i><b>584</b><i>,32</i></div>
+  <svg class="curve" width="420" height="380" viewBox="0 0 420 380">
+    <path d="M0 40 L14 44 L28 46 L42 120 L56 128 L70 130 L84 136 L98 140 L112 146 L126 150 L140 236 L154 240 L168 250 L168 250 Z" fill="none"/>
+    <path d="M0 40 L14 44 L28 46 L42 120 L56 128 L70 130 L84 136 L98 140 L112 146 L126 150 L140 236 L154 240 L168 250 L168 276 L0 276 Z" fill="#F2F4F7" fill-opacity=".07"/>
+    <path d="M0 40 L14 44 L28 46 L42 120 L56 128 L70 130 L84 136 L98 140 L112 146 L126 150 L140 236 L154 240 L168 250" fill="none" stroke="#F2F4F7" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M168 250 L182 250 L196 262 L210 267 L252 268 L280 270 L294 290 L378 290 L392 236 L420 236" fill="none" stroke="#9BA1AC" stroke-width="3" stroke-dasharray="5 8" stroke-linejoin="round" stroke-linecap="round"/>
+    <line x1="0" x2="420" y1="276" y2="276" stroke="#E5484D" stroke-opacity=".5"/>
+    <circle cx="168" cy="250" r="9" fill="#08090B"/><circle cx="168" cy="250" r="5.5" fill="#F2F4F7"/>
+    <text x="168" y="330" text-anchor="middle" font-family="Geist Mono" font-size="15" fill="#9BA1AC">hoje</text>
+  </svg>
+  <div class="k">Controle de gastos · Android</div>
+</div></body></html>

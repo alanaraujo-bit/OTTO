@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { router } from 'expo-router';
-import Animated, { FadeIn } from 'react-native-reanimated';
-import { addMonths, format, startOfMonth } from 'date-fns';
+import Animated, {
+  FadeIn,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { scheduleOnRN } from 'react-native-worklets';
+import * as Haptics from 'expo-haptics';
+import { addMonths, format, startOfMonth, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
@@ -19,6 +27,7 @@ import { CategoryDonut, type DonutSlice } from '@/ui/chart/CategoryDonut';
 import { DebtLadder } from '@/ui/chart/DebtLadder';
 import { Txt } from '@/theme/text';
 import { color, HIT, space } from '@/theme/tokens';
+import { spring, useReducedMotion } from '@/theme/motion';
 import { useLedger } from '@/state/ledger';
 import { forecastRoute, useNav } from '@/lib/nav';
 import { lookFor, ringCut } from '@/domain/category';
@@ -30,12 +39,15 @@ import {
   parseDay,
   project,
   spendByCategory,
+  incomeByCategory,
+  type CategoryTotal,
   type DayItem,
   type MonthCurve,
 } from '@/domain/projection';
 import { settled } from '@/domain/settlement';
+import { capReading } from '@/domain/cap';
 import { withStatements } from '@/domain/card';
-import { brl, brlDelta, brlShort } from '@/domain/money';
+import { brl, brlDelta, brlShort, type Cents } from '@/domain/money';
 import { paymentSeries } from '@/domain/spend';
 
 /**
@@ -131,6 +143,19 @@ function HomeBody() {
       curve.era === 'future'
         ? []
         : spendByCategory(entries, spendFrom, spendTo, paymentSeries(series));
+    const income = curve.era === 'future' ? [] : incomeByCategory(entries, spendFrom, spendTo);
+
+    // The stretch just before this one, the same length, for the line under the ring's total: the
+    // thirty days before a rolling window, the month before a closed one. It is only compared when
+    // the ledger reaches all the way back to its first day — a stretch half-recorded would make any
+    // month look like a fall.
+    const prevTo = dayKey(subDays(parseDay(spendFrom), 1));
+    const prevFrom = rolling ? dayKey(subDays(parseDay(spendFrom), 30)) : dayKey(startOfMonth(parseDay(prevTo)));
+    const covered = curve.era !== 'future' && entries.some((e) => e.date <= prevFrom);
+    const before = {
+      out: covered ? spendByCategory(entries, prevFrom, prevTo, paymentSeries(series)) : null,
+      in: covered ? incomeByCategory(entries, prevFrom, prevTo) : null,
+    };
 
     /*
      * Four named categories and a remainder, not five.
@@ -143,21 +168,74 @@ function HomeBody() {
      * The cut itself is `ringCut`, which names the remainder "Demais" and keys it apart from any
      * category — see the note there.
      */
-    const capOf = (name: string) =>
-      caps.find((c) => c.category.trim().toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'))
-        ?.capCents ?? null;
+    const same = (a: string, b: string) =>
+      a.trim().toLocaleLowerCase('pt-BR') === b.trim().toLocaleLowerCase('pt-BR');
 
-    const categories: DonutSlice[] = ringCut(spend, 4).map((c) =>
-      c.isRest
-        ? {
-            ...c,
-            // The seed "Outros" glyph, never the owner's own "Outros" look: the remainder has no
-            // identity to borrow, and its arc is drawn neutral regardless.
-            ...lookFor('Outros', []),
-            capCents: null,
-          }
-        : { ...c, ...lookFor(c.category, storedCategories), capCents: capOf(c.category) },
-    );
+    /*
+     * A ceiling is a monthly figure, so it is read on the calendar month to date — `capReading`, the
+     * same reading the alerts make — and never on the ring's own window. Measured on a rolling thirty
+     * days, "86% do teto" on the 19th counted late September against October's ceiling, and on the
+     * 2nd last month's spending could cut the notch.
+     */
+    const capOf = (name: string) => {
+      const cap = caps.find((c) => same(c.category, name));
+      if (!cap) return { capCents: null };
+      if (curve.era !== 'current') return { capCents: cap.capCents };
+      const r = capReading(cap, entries, series, today);
+      return { capCents: cap.capCents, capSpentCents: r.spent, burstsOn: r.burstsOn };
+    };
+
+    /*
+     * "Outros" is a category the owner gave a name to and no meaning: it is where things go when they
+     * have no better place. Drawn in a hue it was the loudest mark on the ring — 56% of a month in
+     * teal, saying nothing. So it is set apart from the named slots and drawn grey, after the
+     * categories that do say something and before the remainder.
+     *
+     * A named category under 2% of the ring joins the remainder rather than taking a slot: an arc
+     * that thin is shorter than the gap that ends it, and cannot be seen or touched.
+     */
+    const slicesOf = (list: CategoryTotal[], flow: Flow): DonutSlice[] => {
+      const total = sum(list);
+      const prior = before[flow];
+      const beforeOf = (name: string) =>
+        prior ? (prior.find((c) => same(c.category, name))?.cents ?? 0) : null;
+      const other = list.find((c) => same(c.category, 'Outros'));
+      const named = list.filter((c) => c !== other);
+      const keep = Math.min(4, named.filter((c) => c.cents / total >= 0.02).length);
+      const cut = ringCut(named, keep);
+      const ordered = [
+        ...cut.filter((c) => !c.isRest),
+        ...(other ? [{ key: other.category, category: other.category, cents: other.cents, isRest: false }] : []),
+        ...cut.filter((c) => c.isRest),
+      ];
+      return ordered.map((c) =>
+        c.isRest
+          ? {
+              ...c,
+              // The seed "Outros" glyph, never the owner's own "Outros" look: the remainder has no
+              // identity to borrow, and its arc is drawn neutral regardless.
+              ...lookFor('Outros', []),
+              capCents: null,
+            }
+          : {
+              ...c,
+              ...lookFor(c.category, storedCategories),
+              // A ceiling only bounds spending, so the inflow ring never carries one.
+              ...(flow === 'out' ? capOf(c.category) : { capCents: null }),
+              beforeCents: beforeOf(c.category),
+              plain: other !== undefined && c.category === other.category,
+            },
+      );
+    };
+    const ringOf = (list: CategoryTotal[], flow: Flow): Ring => {
+      const total = sum(list);
+      const prior = before[flow];
+      return {
+        slices: slicesOf(list, flow),
+        total,
+        note: prior ? compareNote(total, sum(prior), rolling) : undefined,
+      };
+    };
 
     // The named slice. In the current month that is today; in a month still ahead it is what the
     // month has committed to, which is the same question asked of a different tense. A closed month
@@ -198,9 +276,8 @@ function HomeBody() {
 
     return {
       curve,
-      categories,
-      spendTotal: spend.reduce((n, c) => n + c.cents, 0),
-      spendLabel: rolling ? 'gastos dos últimos 30 dias' : 'gastos do mês',
+      rings: { out: ringOf(spend, 'out'), in: ringOf(income, 'in') },
+      rolling,
       slice,
       net,
       // Two directions, two totals. One "dívidas" figure used to add what the owner owes to what is
@@ -421,17 +498,8 @@ function HomeBody() {
               </View>
             ) : null}
 
-            {view.categories.length > 0 ? (
-              <View>
-                <Section label={view.spendLabel} />
-                <CategoryDonut
-                  slices={view.categories}
-                  total={view.spendTotal}
-                  label="no total"
-                  delay={520}
-                  onSelect={() => router.push('/categorias')}
-                />
-              </View>
+            {view.rings.out.slices.length > 0 || view.rings.in.slices.length > 0 ? (
+              <FlowRings rings={view.rings} rolling={view.rolling} month={anchor} />
             ) : null}
 
             {view.debts.length > 0 ? (
@@ -540,6 +608,179 @@ function Section({ label, aside, figure }: { label: string; aside?: string; figu
           </Txt>
         ) : null}
       </View>
+    </View>
+  );
+}
+
+type Flow = 'out' | 'in';
+type Ring = { slices: DonutSlice[]; total: Cents; note?: string };
+
+const sum = (list: CategoryTotal[]) => list.reduce((n, c) => n + c.cents, 0);
+
+/**
+ * The line under the ring's total: how this stretch compares with the one before it.
+ *
+ * Words, not an arrow and not a colour. Less spending is not money coming in and more income is not
+ * money going out, so neither may borrow green or red — and "acima"/"abaixo" reads the same for
+ * either direction without deciding for the owner which one is good news.
+ */
+function compareNote(now: Cents, before: Cents, rolling: boolean): string | undefined {
+  if (before <= 0) return undefined;
+  const pct = Math.round(((now - before) / before) * 100);
+  const then = rolling ? 'dos 30 dias anteriores' : 'do mês anterior';
+  if (pct === 0) return `igual ${rolling ? 'aos 30 dias anteriores' : 'ao mês anterior'}`;
+  // Past double, a percentage stops reading as a size: "10530% acima" is a number, "105 vezes" is news.
+  if (pct > 100) {
+    const times = (now / before).toFixed(1).replace('.', ',').replace(/,0$/, '');
+    return `${times} vezes o valor ${then}`;
+  }
+  return `${Math.abs(pct)}% ${pct > 0 ? 'acima' : 'abaixo'} ${then}`;
+}
+
+/**
+ * Where the money went, and where it came from: one ring, two faces.
+ *
+ * Spending alone answered half the question — a month of R$ 5.000 out reads one way against
+ * R$ 9.000 in and another against R$ 4.000. So the ring turns over: a horizontal drag across it
+ * moves between saídas and entradas, and the two names in the heading do the same on a touch. The
+ * drag is never the only way across — DESIGN.md gives the lateral edges to the system Back gesture
+ * and asks every swipe for a twin.
+ *
+ * The rule under the active name is the switch made visible. It follows the finger on the UI
+ * thread, so the gesture teaches itself: pulling the ring slides the rule towards the other name
+ * before anything has been decided. On release the new face is not slid in — the ring rules itself
+ * again from twelve, the one motion this chart has, so a turn is a redraw and not a second kind of
+ * animation stacked on the first.
+ *
+ * The face chosen survives a change of month, because the owner who turned to entradas is asking
+ * about entradas in every month they step through. The legend holds the height of the longer face,
+ * so turning never pulls the page up under the thumb.
+ */
+function FlowRings({
+  rings,
+  rolling,
+  month,
+}: {
+  rings: Record<Flow, Ring>;
+  rolling: boolean;
+  /** Any day of the month being read. A new month redraws the ring rather than jumping its arcs. */
+  month: string;
+}) {
+  const reduced = useReducedMotion();
+  const initial: Flow = rings.out.slices.length === 0 && rings.in.slices.length > 0 ? 'in' : 'out';
+  const [flow, setFlow] = useState<Flow>(initial);
+  // The first face arrives with the screen's entrance; a face turned to, or a month stepped to,
+  // arrives at once.
+  const arrived = useRef(false);
+  useEffect(() => {
+    arrived.current = true;
+  }, []);
+  /** Finger travel across the ring, in px, while a drag is live. */
+  const pull = useSharedValue(0);
+  /** Which face the rule rests under: 0 saídas, 1 entradas. */
+  const at = useSharedValue(initial === 'in' ? 1 : 0);
+  /** x and width of each name, measured, so the rule can travel between them. */
+  const names = useSharedValue<[number, number, number, number]>([0, 0, 0, 0]);
+  const measured = useRef<[number, number, number, number]>([0, 0, 0, 0]);
+
+  const choose = (next: Flow) => {
+    if (next === flow) return;
+    void Haptics.selectionAsync();
+    const to = next === 'in' ? 1 : 0;
+    at.value = reduced ? to : withSpring(to, spring.crisp);
+    setFlow(next);
+  };
+
+  const pan = Gesture.Pan()
+    // Strict on purpose: the drag spans the legend too, and a one-thumb scroll that drifts sideways
+    // must stay a scroll.
+    .activeOffsetX([-32, 32])
+    .failOffsetY([-10, 10])
+    .onUpdate((e) => {
+      pull.value = e.translationX;
+    })
+    .onEnd((e) => {
+      const next =
+        e.translationX < -56 || e.velocityX < -600
+          ? 'in'
+          : e.translationX > 56 || e.velocityX > 600
+            ? 'out'
+            : null;
+      pull.value = reduced ? 0 : withSpring(0, spring.crisp);
+      if (next) scheduleOnRN(choose, next);
+    });
+
+  // The ring gives a sixth of the finger's travel: enough to feel it, not enough to read as the
+  // content being thrown away.
+  const ringStyle = useAnimatedStyle(() => ({ transform: [{ translateX: pull.value * 0.16 }] }));
+  const ruleStyle = useAnimatedStyle(() => {
+    const p = Math.min(1, Math.max(0, at.value - pull.value / 160));
+    const n = names.value;
+    return { left: n[0] + (n[2] - n[0]) * p, width: n[1] + (n[3] - n[1]) * p };
+  });
+
+  const ring = rings[flow];
+
+  return (
+    <View>
+      <View style={styles.section}>
+        <View style={styles.sectionRule} />
+        <View style={styles.sectionRow}>
+          <View style={styles.flowNames} accessibilityRole="tablist">
+            {(['out', 'in'] as const).map((f, i) => (
+              <View
+                key={f}
+                onLayout={(e) => {
+                  const { x, width } = e.nativeEvent.layout;
+                  // Kept on the JS side and written whole: a shared value read back on this thread
+                  // right after a write still holds the old tuple, and the second name would erase
+                  // the first.
+                  measured.current[i * 2] = x;
+                  measured.current[i * 2 + 1] = width;
+                  const m = measured.current;
+                  names.value = [m[0], m[1], m[2], m[3]];
+                }}
+              >
+                <Press
+                  onPress={() => choose(f)}
+                  haptic="none"
+                  hitSlop={8}
+                  outerStyle={styles.flowHit}
+                  accessibilityRole="tab"
+                  accessibilityLabel={f === 'out' ? 'Ver saídas' : 'Ver entradas'}
+                  accessibilityState={{ selected: flow === f }}
+                >
+                  <Txt
+                    variant="micro"
+                    f="sansMedium"
+                    t={flow === f ? 'ink' : 'faint'}
+                    style={styles.sectionLabel}
+                  >
+                    {f === 'out' ? 'SAÍDAS' : 'ENTRADAS'}
+                  </Txt>
+                </Press>
+              </View>
+            ))}
+            <Animated.View style={[styles.flowRule, ruleStyle]} pointerEvents="none" />
+          </View>
+        </View>
+      </View>
+
+      <GestureDetector gesture={pan}>
+        <Animated.View style={[styles.ringBlock, ringStyle]}>
+          <CategoryDonut
+            key={`${flow}:${month}`}
+            slices={ring.slices}
+            total={ring.total}
+            direction={flow}
+            label={rolling ? 'nos últimos 30 dias' : 'no mês'}
+            note={ring.note}
+            period={rolling ? 'nos últimos 30 dias' : 'no mês'}
+            rows={Math.max(rings.out.slices.length, rings.in.slices.length)}
+            delay={arrived.current ? 0 : 520}
+          />
+        </Animated.View>
+      </GestureDetector>
     </View>
   );
 }
@@ -661,6 +902,11 @@ const styles = StyleSheet.create({
     paddingTop: space.md,
   },
   sectionLabel: { letterSpacing: 0.8 },
+  flowNames: { flexDirection: 'row', gap: space.xl, paddingBottom: 6 },
+  // The full 48dp target, pulled back to the 15dp line it sits on so the rule can sit under the word.
+  flowHit: { marginVertical: -(HIT - 15) / 2 },
+  flowRule: { position: 'absolute', bottom: 0, height: 1, backgroundColor: color.ink },
+  ringBlock: { paddingTop: space.md },
 
   dayList: { paddingTop: space.xs },
   dayRow: {

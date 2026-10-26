@@ -65,10 +65,9 @@ export function capReading(
   const day = t.getDate();
   const from = dayKey(new Date(t.getFullYear(), t.getMonth(), 1));
 
-  const spent =
-    spendByCategory(entries, from, today, paymentSeries(series)).find(
-      (c) => c.category === cap.category,
-    )?.cents ?? 0;
+  const spent = spendByCategory(entries, from, today, paymentSeries(series))
+    .filter((c) => sameCategory(c.category, cap.category))
+    .reduce((n, c) => n + c.cents, 0);
 
   const leftCents = cap.capCents - spent;
   const daysLeft = days - day + 1;
@@ -111,6 +110,15 @@ export function capReading(
 }
 
 /**
+ * A ceiling names its category the way the owner typed it, and so do the entries — "alimentação "
+ * typed in a hurry is still Alimentação. Matched the way the category screens match a name, or the
+ * ceiling reads 0% spent while the ring beside it reads the money.
+ */
+function sameCategory(a: string, b: string): boolean {
+  return a.trim().toLocaleLowerCase('pt-BR') === b.trim().toLocaleLowerCase('pt-BR');
+}
+
+/**
  * The day a ceiling already through was actually crossed.
  *
  * Read from the entries rather than from the rate, because this one is a fact and the projection is
@@ -127,7 +135,7 @@ function crossedOn(
   const payments = paymentSeries(series);
   const byDay = new Map<string, Cents>();
   for (const e of entries) {
-    if (e.category !== cap.category || e.date < from || e.date > today) continue;
+    if (!sameCategory(e.category, cap.category) || e.date < from || e.date > today) continue;
     if (!isSpend(e, payments)) continue;
     byDay.set(e.date, (byDay.get(e.date) ?? 0) + e.amountCents);
   }

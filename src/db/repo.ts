@@ -103,6 +103,11 @@ export async function clearLedger(): Promise<void> {
   await api<void>('/v1/ledger', { method: 'DELETE' });
 }
 
+/** Irreversibly removes the signed-in owner's account and everything it holds from Railway. */
+export async function deleteOttoAccount(): Promise<void> {
+  await api<void>('/v1/account', { method: 'DELETE' });
+}
+
 /*
  * The three inserts below guard on id before appending, and that guard is what lets `change` retry
  * at all — see its note. It is not defensive coding: on a retry the ledger being read *is* the one

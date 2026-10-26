@@ -659,6 +659,23 @@ export function spendByCategory(
     .sort((a, b) => b.cents - a.cents);
 }
 
+/**
+ * What came in, by category — the other face of `spendByCategory`.
+ *
+ * No `payments` set here: the only transfer the model knows is a card statement being paid, and that
+ * money only ever leaves. Every inflow is income.
+ */
+export function incomeByCategory(entries: Entry[], from: string, to: string): CategoryTotal[] {
+  const totals = new Map<string, Cents>();
+  for (const e of entries) {
+    if (e.direction !== 'in' || e.date < from || e.date > to) continue;
+    totals.set(e.category, (totals.get(e.category) ?? 0) + e.amountCents);
+  }
+  return [...totals.entries()]
+    .map(([category, cents]) => ({ category, cents }))
+    .sort((a, b) => b.cents - a.cents);
+}
+
 export interface DebtStatus {
   series: Series;
   paid: number;

@@ -31,6 +31,7 @@ export function Press({
   outerStyle,
   accessibilityLabel,
   accessibilityState,
+  accessibilityRole = 'button',
   hitSlop = 8,
 }: {
   children: ReactNode;
@@ -51,6 +52,8 @@ export function Press({
   outerStyle?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
   accessibilityState?: { selected?: boolean; disabled?: boolean };
+  /** A button unless it says otherwise — a tab says so, so a screen reader can name the set. */
+  accessibilityRole?: 'button' | 'tab';
   hitSlop?: number;
 }) {
   const reduced = useReducedMotion();
@@ -85,7 +88,7 @@ export function Press({
       disabled={disabled}
       hitSlop={hitSlop}
       style={outerStyle}
-      accessibilityRole="button"
+      accessibilityRole={accessibilityRole}
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled, ...accessibilityState }}
     >

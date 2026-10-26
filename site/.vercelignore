@@ -1,0 +1,4 @@
+_research
+.vercel
+.env*
+.gitignore

@@ -623,6 +623,11 @@ async function route(request, response) {
     finally { client.release(); }
     return json(response, 200, { ok: true });
   }
+  if (request.method === 'DELETE' && url.pathname === '/v1/account') {
+    // Every user-owned table cascades from users, so this one row takes the whole account with it.
+    await pool.query('DELETE FROM users WHERE id = $1', [claims.sub]);
+    return json(response, 200, { ok: true });
+  }
   return fail(response, 404, 'Rota não encontrada.');
 }
 

@@ -23,7 +23,7 @@ import { saidPlainly } from '@/lib/errors';
 import { useLock } from '@/lib/auth/lock';
 import { useSession } from '@/lib/auth/session';
 import { useLedger } from '@/state/ledger';
-import { clearLedger } from '@/db/repo';
+import { clearLedger, deleteOttoAccount } from '@/db/repo';
 import { confirmDestructiveAction } from '@/lib/auth/lock';
 import { parseDay } from '@/domain/projection';
 
@@ -395,6 +395,32 @@ function AjustesBody() {
                 : armed === 'all-data'
                   ? 'exclui contas, cartões, lançamentos e recorrências do banco'
                   : 'mantém seu acesso, mas exclui seu razão definitivamente'}
+            </Txt>
+          </View>
+        </Press>
+
+        {/* Google Play requires an in-app path to delete the account itself, not only its data. */}
+        <Press
+          onPress={() => void destroy(
+            'account',
+            'Confirme para excluir sua conta OTTO',
+            async () => { await deleteOttoAccount(); await signOut(); router.replace('/sign-in'); },
+            'Sua conta OTTO foi excluída.',
+          )}
+          disabled={busy}
+          style={styles.row}
+          accessibilityLabel={
+            armed === 'account' ? 'Toque de novo e confirme sua biometria' : 'Excluir minha conta OTTO'
+          }
+        >
+          <View style={styles.rowText}>
+            <Txt variant="body" t={armed === 'account' ? 'negative' : 'muted'}>
+              {armed === 'account' ? 'Toque de novo e confirme sua biometria' : 'Excluir minha conta OTTO'}
+            </Txt>
+            <Txt variant="micro" t="faint">
+              {ready && !available
+                ? 'pede biometria: cadastre uma nas configurações do Android para poder excluir'
+                : 'apaga login, razão, dívidas compartilhadas e o uso do assistente'}
             </Txt>
           </View>
         </Press>
