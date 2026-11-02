@@ -193,6 +193,25 @@ function Form() {
     });
   };
 
+  /**
+   * Ends the rule, says so, and goes back to the list it was opened from — where the row folds out
+   * of the group. A failure used to be silent: the promise had no catch, so a rejected write left the
+   * owner on a screen that looked as if nothing had been asked of it.
+   */
+  const remove = async (): Promise<boolean> => {
+    if (!existing) return false;
+    try {
+      await deleteSeries(existing.id);
+      await load();
+      snack(existing.kind === 'debt' ? 'Dívida excluída.' : 'Recorrência excluída.', 'info');
+      router.back();
+      return true;
+    } catch (e) {
+      snack(saidPlainly(e), 'error');
+      return false;
+    }
+  };
+
   // A destructive action that arms itself must be able to stand down, or the next stray tap on the
   // row does the thing. Same rule as the reseed in ajustes.
   useEffect(() => {
@@ -318,6 +337,7 @@ function Form() {
         settling={false}
         onSettle={settleNow}
         onEdit={() => setEditing(true)}
+        onDelete={remove}
       />
     );
   }
@@ -548,9 +568,7 @@ function Form() {
                 return;
               }
               setArmed(false);
-              void deleteSeries(existing.id)
-                .then(load)
-                .then(() => router.back());
+              void remove();
             }}
             style={styles.remove}
             accessibilityLabel={armed ? 'Toque de novo para excluir' : 'Excluir recorrência'}

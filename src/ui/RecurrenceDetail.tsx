@@ -51,6 +51,7 @@ export function RecurrenceDetail({
   settling,
   onSettle,
   onEdit,
+  onDelete,
 }: {
   series: Series;
   history: DebtHistory;
@@ -64,6 +65,8 @@ export function RecurrenceDetail({
   settling: boolean;
   onSettle: () => void;
   onEdit: () => void;
+  /** Ends the rule. Resolves false when it could not, so the row can stand back down. */
+  onDelete: () => Promise<boolean>;
 }) {
   const commitment = useMemo(() => commitmentFor(series, today), [series, today]);
   const debt = series.kind === 'debt' && series.totalCount != null;
@@ -206,8 +209,58 @@ export function RecurrenceDetail({
         {series.kind === 'debt' && !series.linkedShareToken ? (
           <DebtSharePanel series={series} />
         ) : null}
+
+        <Remove noun={series.kind === 'debt' ? 'dívida' : 'recorrência'} onDelete={onDelete} />
       </ScrollView>
     </>
+  );
+}
+
+/**
+ * Excluir, on the reading itself.
+ *
+ * It used to exist only at the very end of the edit form, under Salvar and Cancelar, in faint type —
+ * so an owner looking at a rule they no longer wanted saw no way to end it, and concluded there was
+ * none. Here it closes the page, under its own rule, where "what else can I do with this" is looked
+ * for. It still arms first and stands down on its own: the second tap is the confirmation, and the
+ * line under it says what deleting does *not* do, because an owner will assume the history goes too.
+ */
+function Remove({ noun, onDelete }: { noun: string; onDelete: () => Promise<boolean> }) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+
+  return (
+    <View style={styles.removeBlock}>
+      <View style={styles.removeRule} />
+      <Press
+        onPress={async () => {
+          if (busy) return;
+          if (!armed) {
+            setArmed(true);
+            return;
+          }
+          setArmed(false);
+          setBusy(true);
+          if (!(await onDelete())) setBusy(false);
+        }}
+        haptic={armed ? 'light' : 'selection'}
+        disabled={busy}
+        style={styles.removeRow}
+        accessibilityLabel={armed ? 'Toque de novo para excluir' : `Excluir ${noun}`}
+      >
+        <Txt variant="body" t={armed ? 'negative' : 'muted'}>
+          {armed ? 'Toque de novo para excluir' : `Excluir ${noun}`}
+        </Txt>
+        <Txt variant="micro" t="faint" style={styles.hint}>
+          Para de acontecer daqui para a frente. O que já foi lançado continua no razão.
+        </Txt>
+      </Press>
+    </View>
   );
 }
 
@@ -395,6 +448,9 @@ const styles = StyleSheet.create({
   detailValue: { flexShrink: 1, paddingLeft: space.lg, textAlign: 'right' },
   detailSettle: { paddingTop: space.xl },
   detailEdit: { minHeight: 48, justifyContent: 'center', marginTop: space.lg },
+  removeBlock: { paddingTop: space.xxl },
+  removeRule: { height: StyleSheet.hairlineWidth, backgroundColor: color.hairline },
+  removeRow: { paddingVertical: space.md },
   deferLink: { minHeight: 48, justifyContent: 'center', marginTop: space.sm },
   defer: { paddingTop: space.lg },
   deferLabel: { letterSpacing: 0.8, paddingTop: space.lg, paddingBottom: space.md },
