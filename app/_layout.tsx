@@ -179,7 +179,19 @@ export default function RootLayout() {
                   side. Lateral movement is this app's grammar for "a sibling screen"; capture is not a
                   sibling of the home screen, it is a surface the home screen raises.
                 */}
-                <Stack.Screen name="lancar" options={{ animation: 'slide_from_bottom' }} />
+                {/*
+                  A blank Lançar is kept built in the background (see `TabBar`), so "+" only has to
+                  slide it in. A Lançar sent somewhere — an entry to edit, a bill to settle, a
+                  capture to confirm — is a different form: it gets an id of its own, so it is built
+                  fresh with its params instead of taking over the blank one.
+                */}
+                <Stack.Screen
+                  name="lancar"
+                  options={{ animation: 'slide_from_bottom' }}
+                  getId={({ params }) =>
+                    params && Object.keys(params).length > 0 ? JSON.stringify(params) : 'blank'
+                  }
+                />
               </Stack>
             </BlurTargetView>
             <TabBar blurTarget={page} />

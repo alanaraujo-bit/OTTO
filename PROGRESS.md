@@ -1553,8 +1553,12 @@ Medido no Realme, 0.5.2 → fase 2: troca de mês, pior quadro 21–172 → <20�
 p99 25 ms; partida a frio ~300 ms até o primeiro quadro, conteúdo em ~1 s (igual).
 **Não testado:** abas escondidas re-renderizando quando o razão muda — o razão vive no servidor e o emulador
 está na conta do Alan, então salvar um lançamento de teste não foi feito.
-**Sobra:** o Lançar leva ~250 ms de JS para montar antes de subir. Pré-montá-lo (`router.prefetch`) o deixaria
-instantâneo, mas ele guarda "hoje" ao montar — pré-montado durante a virada do dia lançaria na data errada.
+**Lançar pré-montado.** Montar o Lançar no toque custava ~250 ms de JS antes de ele começar a subir. Agora a
+barra pré-carrega um Lançar em branco (`router.prefetch('/lancar')`) sempre que se volta a uma aba e o app está
+parado; o "+" só o desliza: começa a subir ~55 ms após o toque, pior quadro 25–31 ms (0.5.2: 53–93). Ele relê
+"hoje" ao ganhar foco e leva junto uma data não mexida, para um formulário montado antes da meia-noite não lançar
+no dia anterior. Aberturas com parâmetros (editar, quitar, captura, nota) têm `getId` próprio em `app/_layout.tsx`
+e continuam montando um formulário novo.
 
 ### Armadilhas desta fase
 - `expo prebuild` tenta apagar `android/` inteiro. Falhou por o Gradle segurar a pasta e nada se

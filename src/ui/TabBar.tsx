@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ComponentType, type RefObject } from 'react';
 import {
+  InteractionManager,
   StyleSheet,
   View,
   type LayoutChangeEvent,
@@ -196,6 +197,22 @@ export function TabBar({ blurTarget }: { blurTarget?: RefObject<View | null> }) 
   useEffect(() => {
     showTabBar();
   }, [pathname]);
+
+  // Recording is the product, so "+" must open at once: whenever the owner is back on a tab and the
+  // app is idle, a blank Lançar is built in the background and the tap only slides it in. Building
+  // it on the tap cost ~250ms of JS before the sheet could start rising.
+  const onTab = routeTab != null;
+  useEffect(() => {
+    if (!onTab) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const task = InteractionManager.runAfterInteractions(() => {
+      timer = setTimeout(() => router.prefetch('/lancar'), 400);
+    });
+    return () => {
+      task.cancel();
+      if (timer) clearTimeout(timer);
+    };
+  }, [onTab]);
 
   const visible = routeTab != null;
   const shown = useSharedValue(visible ? 1 : 0);

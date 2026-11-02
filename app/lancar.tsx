@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { router, useLocalSearchParams, useNavigation } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams, useNavigation } from 'expo-router';
 import Animated, {
   FadeIn,
   useAnimatedStyle,
@@ -82,7 +82,13 @@ export default function Lancar() {
   const caps = useLedger((s) => s.caps);
   const storedCategories = useLedger((s) => s.categories);
   const deferrals = useLedger((s) => s.deferralsBySlot);
-  const today = useMemo(() => dayKey(new Date()), []);
+  /*
+   * Today, as of the moment the screen is shown — not as of when it was built. The bar keeps a blank
+   * Lançar built in the background so "+" opens it at once, and that instance may have been built
+   * before midnight. So the day is read again on every focus, and a date the owner never touched
+   * moves with it: an entry recorded on the 3rd must not land on the 2nd because the form was ready.
+   */
+  const [today, setToday] = useState(() => dayKey(new Date()));
   const load = useLedger((s) => s.load);
 
   const existing = useMemo(() => entries.find((e) => e.id === id) ?? null, [entries, id]);
@@ -102,6 +108,17 @@ export default function Lancar() {
   /** The day the money moved. Defaults to today; the owner may backdate, never postdate — an entry
       is a fact, and a fact cannot sit in the future. */
   const [date, setDate] = useState(today);
+  const builtOn = useRef(today);
+  useFocusEffect(
+    useCallback(() => {
+      const now = dayKey(new Date());
+      const was = builtOn.current;
+      if (now === was) return;
+      builtOn.current = now;
+      setToday(now);
+      setDate((d) => (d === was ? now : d));
+    }, []),
+  );
   /** `HH:mm`, or empty for "the owner did not say". Free text, formatted as it is typed. */
   const [time, setTime] = useState('');
   const [timeTouched, setTimeTouched] = useState(false);
@@ -172,8 +189,8 @@ export default function Lancar() {
   const chosen = payFrom.find((a) => a.id === accountId) ?? payFrom[0] ?? null;
   const onCard = chosen?.kind === 'card';
   const cycle = useMemo(
-    () => (chosen && onCard ? statementCycle(chosen, dayKey(new Date())) : null),
-    [chosen, onCard],
+    () => (chosen && onCard ? statementCycle(chosen, today) : null),
+    [chosen, onCard, today],
   );
 
   // The ledger arrives after the first render, so the default cannot be an initial state.
@@ -284,11 +301,11 @@ export default function Lancar() {
 
   const openNow = useMemo(() => {
     if (existing) return [];
-    const t = parseDay(dayKey(new Date()));
+    const t = parseDay(today);
     const from = dayKey(new Date(t.getFullYear(), t.getMonth(), 1));
     const to = dayKey(new Date(t.getFullYear(), t.getMonth() + 1, 0));
     return project(forecast, from, to, settled(entries), deferrals).filter((o) => o.direction === direction);
-  }, [existing, forecast, entries, deferrals, direction]);
+  }, [existing, forecast, entries, deferrals, direction, today]);
 
   /**
    * A forecast the owner asked to settle from somewhere else — the razão's swipe, a rule's own
