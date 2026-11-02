@@ -51,13 +51,21 @@ export default function RootLayout() {
     void hydrate();
   }, [hydrate]);
 
-  // Every financial notification carries a date. A tap lands on that day in the calendar rather
-  // than dropping the owner on a generic home screen and making them search for the reason.
+  // A tap lands where the message is explained — the bill it is about, the day in the calendar, the
+  // keypad for "lance" — rather than on a generic home screen that leaves the owner searching.
   useEffect(() => {
     const response = Notifications.addNotificationResponseReceivedListener((event) => {
-      const data = event.notification.request.content.data;
-      const date = typeof data?.date === 'string' ? data.date : undefined;
-      router.push(date ? { pathname: '/calendario', params: { date } } : '/calendario');
+      const data = event.notification.request.content.data as
+        | { route?: unknown; params?: unknown; date?: unknown }
+        | undefined;
+      const route = typeof data?.route === 'string' ? data.route : '/calendario';
+      const params =
+        data?.params && typeof data.params === 'object'
+          ? (data.params as Record<string, string>)
+          : typeof data?.date === 'string'
+            ? { date: data.date }
+            : {};
+      router.push({ pathname: route as never, params });
     });
     return () => response.remove();
   }, []);

@@ -3,22 +3,16 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
 import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
 import { Press } from '@/ui/Press';
 import { Wordmark } from '@/ui/Wordmark';
+import { Latch } from '@/ui/Latch';
 import { ChevronRight } from '@/ui/Icon';
 import { onTabScroll, useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
-import { duration, ease, spring, useReducedMotion } from '@/theme/motion';
 import { useSnackbar } from '@/ui/Snackbar';
 import { useLock } from '@/lib/auth/lock';
 import { useSession } from '@/lib/auth/session';
@@ -285,37 +279,6 @@ function Door({ title, hint, onPress }: { title: string; hint: string; onPress: 
   );
 }
 
-/**
- * The latch itself: a rule that slides, not a pill that fills.
- *
- * A stock switch would be the second selection grammar in an app whose answer to "this one is
- * chosen" is always a rule — the tab bar's marker, the segmented control in lançar, the focus line
- * under a field. So the travelling part is a rule, and it is the same weight as every other one.
- */
-function Latch({ on, dim }: { on: boolean; dim: boolean }) {
-  const reduced = useReducedMotion();
-  const t = useSharedValue(on ? 1 : 0);
-
-  useEffect(() => {
-    t.value = reduced
-      ? withTiming(on ? 1 : 0, { duration: duration.state, easing: ease.out })
-      : withSpring(on ? 1 : 0, spring.crisp);
-  }, [on, reduced, t]);
-
-  const knob = useAnimatedStyle(() => ({
-    transform: [{ translateX: t.value * (LATCH_W - LATCH_KNOB) }],
-    backgroundColor: on ? color.ink : color.inkFaint,
-  }));
-  const rail = useAnimatedStyle(() => ({ opacity: dim ? 0.35 : 1 }));
-
-  return (
-    <Animated.View style={[styles.latch, rail]}>
-      <View style={styles.latchTrack} />
-      <Animated.View style={[styles.latchKnob, knob]} />
-    </Animated.View>
-  );
-}
-
 /** A group boundary, drawn the way this world draws one: a rule, then the label under it. */
 function Section({ label }: { label: string }) {
   return (
@@ -331,9 +294,6 @@ function Section({ label }: { label: string }) {
 function providerLabel(p?: 'password' | 'google' | 'apple'): string {
   return p === 'google' ? 'Entrou com Google' : p === 'apple' ? 'Entrou com Apple' : 'E-mail e senha';
 }
-
-const LATCH_W = 44;
-const LATCH_KNOB = 20;
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
@@ -356,17 +316,4 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
   },
   rowText: { flex: 1, paddingRight: space.lg },
-
-  /* A rule with a travelling segment on it, not a pill with a dot in it. This app answers "this one
-     is chosen" with a rule everywhere else — the tab marker, the segmented control, the focus line
-     under a field — and a bordered capsule read on the device as a button with a minus sign in it. */
-  latch: { width: LATCH_W, height: 12, justifyContent: 'center' },
-  latchTrack: { height: 2, borderRadius: 1, backgroundColor: color.hairline },
-  latchKnob: {
-    position: 'absolute',
-    width: LATCH_KNOB,
-    height: 2,
-    borderRadius: 1,
-  },
-
 });

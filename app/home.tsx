@@ -18,6 +18,7 @@ import { Wordmark } from '@/ui/Wordmark';
 import { Amount } from '@/ui/Amount';
 import { MonthStepper, useMonthSwipe } from '@/ui/MonthStepper';
 import { MonthFlow } from '@/ui/MonthFlow';
+import { AlertsInvite } from '@/ui/AlertsInvite';
 import { Press } from '@/ui/Press';
 import { Ask } from '@/ui/Icon';
 import { onTabScroll, useTabBarClearance } from '@/ui/TabBar';
@@ -464,6 +465,9 @@ function HomeBody() {
                   onOpen={(d) => go('ledger', { at: view.curve.from, focus: d })}
                 />
               </Reveal>
+
+              {/* Asks once for notifications, under the month it will be speaking about. */}
+              <AlertsInvite />
 
               {/*
                 The one sentence the arithmetic exists to produce. It is only rendered when it is

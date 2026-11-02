@@ -11,6 +11,7 @@
     "ledger": "node --import ./tools/register-ts.mjs tools/ledger-check.mjs",
     "assistant": "node --import ./tools/register-ts.mjs tools/assistant-check.mjs",
     "lock": "node --import ./tools/register-ts.mjs tools/lock-check.mjs",
+    "rhythm": "node --import ./tools/register-ts.mjs tools/rhythm-check.mjs",
     "google": "node --import ./tools/register-ts.mjs tools/google-check.mjs",
     "ios": "expo run:ios"
   },

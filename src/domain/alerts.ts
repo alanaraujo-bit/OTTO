@@ -23,7 +23,20 @@ import { brlShort, type Cents } from './money';
  * figure the app would contradict when opened.
  */
 
-export type AlertKind = 'trough' | 'statement' | 'tomorrow' | 'cap';
+export type AlertKind =
+  | 'trough'
+  | 'statement'
+  | 'tomorrow'
+  | 'cap'
+  // The rhythm (see `rhythm.ts`): what is coming, what came, and how the week and the month look.
+  | 'due'
+  | 'income'
+  | 'overdue'
+  | 'week'
+  | 'monthOpen'
+  | 'monthClose'
+  | 'shortfall'
+  | 'nudge';
 
 export interface Alert {
   kind: AlertKind;
@@ -37,6 +50,17 @@ export interface Alert {
   date: string;
   title: string;
   body: string;
+  /** Local hour it fires at. Morning unless the alert says otherwise. */
+  hour?: number;
+  /** Where a tap lands, and with what. Defaults by kind in the scheduler. */
+  route?: string;
+  params?: Record<string, string>;
+  /**
+   * Said once, ever. An alert dated "tomorrow" every time the ledger is read — a ceiling that will
+   * not hold, a month closing in the red — would otherwise move to the next morning on every open
+   * and arrive every single day. The scheduler remembers that it went out.
+   */
+  once?: boolean;
 }
 
 /** How far ahead to look. Beyond a fortnight a forecast is not firm enough to wake someone up for. */
@@ -202,6 +226,8 @@ function capAlerts(
          */
         id: `cap:${r.category}:${month}`,
         date: tomorrow,
+        once: true,
+        route: '/tetos',
         title: through
           ? `${r.category} passou do seu teto`
           : `${r.category}: o teto não chega ao fim do mês`,

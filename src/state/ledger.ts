@@ -4,11 +4,9 @@ import { seed } from '@/db/seed';
 import type { Account, Deferral, Entry, Series } from '@/domain/model';
 import type { Cap } from '@/domain/cap';
 import type { Category } from '@/domain/category';
-import { alertsFor } from '@/domain/alerts';
 import { deferralMap } from '@/domain/deferral';
-import { dayKey } from '@/domain/projection';
 import { isStatementSeries } from '@/domain/settlement';
-import { reschedule } from '@/lib/notify';
+import { planFor, reschedule } from '@/lib/notify';
 
 interface LedgerState {
   ready: boolean;
@@ -77,16 +75,7 @@ export const useLedger = create<LedgerState>((set, get) => ({
        * screen should wait on the notification service to draw a balance. It is also a no-op unless
        * the owner has actually turned alerts on — `reschedule` checks the capability first.
        */
-      void reschedule(
-        alertsFor(
-          ledger.accounts,
-          ledger.entries,
-          ledger.series,
-          dayKey(new Date()),
-          deferralMap(ledger.deferrals),
-          ledger.caps,
-        ),
-      )
+      void reschedule(planFor(ledger))
         .catch(() => {
           // A scheduler that will not answer must never take the ledger down with it.
         });
