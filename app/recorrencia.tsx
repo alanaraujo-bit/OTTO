@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { BackHandler, StyleSheet, TextInput, View } from 'react-native';
+import Animated, {
+  FadeInLeft,
+  FadeInRight,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import { addDays, addMonths, endOfMonth, format, startOfMonth, subMonths } from 'date-fns';
@@ -9,16 +16,19 @@ import { BackBar } from '@/ui/BackBar';
 import { Reveal } from '@/ui/Reveal';
 import { Press } from '@/ui/Press';
 import { Button } from '@/ui/Button';
+import { FlowAmount } from '@/ui/FlowAmount';
+import { ChevronRight } from '@/ui/Icon';
 import { DebtSharePanel } from '@/ui/DebtSharePanel';
 import { RecurrenceDetail } from '@/ui/RecurrenceDetail';
 import { Field } from '@/ui/Field';
 import { MoneyField } from '@/ui/MoneyField';
 import { KeyboardAwareScrollView } from '@/ui/KeyboardAwareScrollView';
-import { ChipRow } from '@/ui/Chip';
+import { Chip, ChipRow } from '@/ui/Chip';
 import { categoryOrderFor } from '@/ui/choices';
 import { Txt } from '@/theme/text';
-import { color, radius, space } from '@/theme/tokens';
+import { color, font, radius, space, type } from '@/theme/tokens';
 import { saidPlainly } from '@/lib/errors';
+import { duration, ease, useReducedMotion } from '@/theme/motion';
 import { useSnackbar } from '@/ui/Snackbar';
 import { useLedger } from '@/state/ledger';
 import { deferOccurrence, deleteSeries, insertSeries, updateSeries } from '@/db/repo';
@@ -69,7 +79,9 @@ const SHAPES: { key: Shape; label: string; note: string }[] = [
 
 function Form() {
   const snack = useSnackbar();
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, shape: presetParam } = useLocalSearchParams<{ id?: string; shape?: string }>();
+  const preset: Shape | null =
+    presetParam === 'out' || presetParam === 'in' || presetParam === 'debt' ? presetParam : null;
   const series = useLedger((s) => s.series);
   const accounts = useLedger((s) => s.accounts);
   const entries = useLedger((s) => s.entries);
@@ -86,7 +98,7 @@ function Form() {
     [existing, entries],
   );
 
-  const [shape, setShape] = useState<Shape>('out');
+  const [shape, setShape] = useState<Shape>(preset ?? 'out');
   const [debtDirection, setDebtDirection] = useState<'out' | 'in'>('out');
   const [title, setTitle] = useState('');
   const [counterparty, setCounterparty] = useState('');
@@ -310,6 +322,7 @@ function Form() {
       if (existing) await updateSeries(next);
       else await insertSeries(next);
       await load();
+      snack(existing ? 'Recorrência salva.' : 'Recorrência criada.', 'info');
       router.back();
     } catch (e) {
       setSaving(false);
@@ -338,6 +351,41 @@ function Form() {
         onSettle={settleNow}
         onEdit={() => setEditing(true)}
         onDelete={remove}
+      />
+    );
+  }
+
+  if (!existing) {
+    return (
+      <Steps
+        preset={preset}
+        shape={shape}
+        setShape={setShape}
+        debtDirection={debtDirection}
+        setDebtDirection={setDebtDirection}
+        title={title}
+        setTitle={setTitle}
+        counterparty={counterparty}
+        setCounterparty={setCounterparty}
+        category={category}
+        setCategory={setCategory}
+        categories={categories}
+        amount={amount}
+        setAmount={setAmount}
+        day={day}
+        setDay={setDay}
+        total={total}
+        setTotal={setTotal}
+        paid={paid}
+        setPaid={setPaid}
+        dayOfMonth={dayOfMonth}
+        totalCount={totalCount}
+        paidCount={paidCount}
+        preview={preview}
+        valid={valid}
+        saving={saving}
+        onSave={() => void save()}
+        today={today}
       />
     );
   }
@@ -588,6 +636,564 @@ function Form() {
 }
 
 
+type Step = 'kind' | 'amount' | 'day' | 'details' | 'parcels' | 'review';
+
+const FROM_RIGHT = FadeInRight.duration(duration.rule).easing(ease.out);
+const FROM_LEFT = FadeInLeft.duration(duration.rule).easing(ease.out);
+
+/* The kinds, said the way a person would describe the thing in front of them, with examples they
+   recognise. The schema's words (outflow, inflow, debt) never reach this screen. */
+const KINDS: { key: Shape; title: string; example: string }[] = [
+  { key: 'out', title: 'Uma conta que sai todo mês', example: 'aluguel, internet, luz, academia, assinaturas' },
+  { key: 'in', title: 'Um dinheiro que entra todo mês', example: 'salário, pensão, um aluguel que você recebe' },
+  {
+    key: 'debt',
+    title: 'Uma compra parcelada ou dívida',
+    example: 'tem número de parcelas: empréstimo, cartão parcelado, alguém que te paga aos poucos',
+  },
+];
+
+/* Names people type most, one tap away. A suggestion only fills the field; it can still be edited. */
+const NAMES: Record<Shape, string[]> = {
+  out: ['Aluguel', 'Internet', 'Luz', 'Água', 'Celular', 'Academia', 'Streaming', 'Condomínio'],
+  in: ['Salário', 'Freela', 'Pensão', 'Aluguel recebido', 'Bolsa'],
+  debt: ['Empréstimo', 'Cartão parcelado', 'Financiamento', 'Celular parcelado'],
+};
+
+/**
+ * Creating a recurrence, one question at a time.
+ *
+ * The form asked everything at once — three shapes in a row of capitals, a name, a money field, a
+ * day typed as digits, installment counts, a chip row of categories — and a first-time owner had to
+ * know what every field meant before the first one made sense. Here each screen asks one thing, in
+ * a sentence, and the answer to the first (what kind of thing is this) shapes every question after
+ * it. The day is a month to tap rather than a number to type. The last step reads the whole rule
+ * back as it will appear, with its yearly cost, before anything is written.
+ *
+ * Someone who knows the app moves fast through it: choosing a kind or a day advances on its own, and
+ * a kind chosen on the Fixas screen skips the first step entirely. Editing keeps the full form, which
+ * is the faster tool once you know what you are changing.
+ *
+ * Back — the arrow or the system gesture — steps back through the questions before it leaves, so a
+ * slip on step four never throws away the first three.
+ */
+function Steps({
+  preset,
+  shape,
+  setShape,
+  debtDirection,
+  setDebtDirection,
+  title,
+  setTitle,
+  counterparty,
+  setCounterparty,
+  category,
+  setCategory,
+  categories,
+  amount,
+  setAmount,
+  day,
+  setDay,
+  total,
+  setTotal,
+  paid,
+  setPaid,
+  dayOfMonth,
+  totalCount,
+  paidCount,
+  preview,
+  valid,
+  saving,
+  onSave,
+  today,
+}: {
+  preset: Shape | null;
+  shape: Shape;
+  setShape: (s: Shape) => void;
+  debtDirection: 'out' | 'in';
+  setDebtDirection: (d: 'out' | 'in') => void;
+  title: string;
+  setTitle: (t: string) => void;
+  counterparty: string;
+  setCounterparty: (t: string) => void;
+  category: string;
+  setCategory: (c: string) => void;
+  categories: string[];
+  amount: number | null;
+  setAmount: (c: number | null) => void;
+  day: string;
+  setDay: (d: string) => void;
+  total: string;
+  setTotal: (t: string) => void;
+  paid: string;
+  setPaid: (t: string) => void;
+  dayOfMonth: number | null;
+  totalCount: number | null;
+  paidCount: number;
+  preview: { draft: Series; commitment: ReturnType<typeof commitmentFor> } | null;
+  valid: boolean;
+  saving: boolean;
+  onSave: () => void;
+  today: string;
+}) {
+  const reduced = useReducedMotion();
+  const steps: Step[] = [
+    ...(preset ? [] : (['kind'] as Step[])),
+    'amount',
+    'day',
+    'details',
+    ...(shape === 'debt' ? (['parcels'] as Step[]) : []),
+    'review',
+  ];
+  const [index, setIndex] = useState(0);
+  const dir = useRef(0);
+  const step: Step = steps[index] ?? 'review';
+
+  const go = (to: number) => {
+    dir.current = Math.sign(to - index);
+    setIndex(to);
+  };
+  const back = () => (index > 0 ? go(index - 1) : router.back());
+
+  // The system Back walks the questions too; leaving is only the last step back.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (index === 0) return false;
+      go(index - 1);
+      return true;
+    });
+    return () => sub.remove();
+  });
+
+  // A category the owner has not chosen follows the kind: an income opens on Renda, not on Outros.
+  const touched = useRef(false);
+  useEffect(() => {
+    if (touched.current || !categories[0]) return;
+    // A debt is rarely the kind of spending the most-used category names; Outros is the honest guess.
+    setCategory(shape === 'debt' && categories.includes('Outros') ? 'Outros' : categories[0]);
+  }, [shape, categories, setCategory]);
+
+  useEffect(() => {
+    if (step !== 'parcels') return;
+    if (total === '') setTotal('12');
+    if (paid === '') setPaid('0');
+  }, [step, total, paid, setTotal, setPaid]);
+
+  // One rule across the top, filling as the questions are answered.
+  const progress = useSharedValue((index + 1) / steps.length);
+  useEffect(() => {
+    const to = (index + 1) / steps.length;
+    progress.value = reduced ? to : withTiming(to, { duration: duration.rule, easing: ease.out });
+  }, [index, steps.length, reduced, progress]);
+  const filled = useAnimatedStyle(() => ({ width: `${progress.value * 100}%` }));
+
+  const ok =
+    step === 'kind'
+      ? true
+      : step === 'amount'
+        ? (amount ?? 0) > 0
+        : step === 'day'
+          ? dayOfMonth !== null
+          : step === 'details'
+            ? title.trim() !== ''
+            : step === 'parcels'
+              ? totalCount !== null && paidCount <= totalCount
+              : valid;
+
+  const verb = shape === 'in' ? 'entra' : 'sai';
+  const heading: Record<Step, { title: string; sub: string }> = {
+    kind: { title: 'O que você quer cadastrar?', sub: 'Algo que se repete todo mês. Escolha o tipo.' },
+    amount: {
+      title: shape === 'debt' ? 'Qual o valor de cada parcela?' : `Quanto ${verb} por mês?`,
+      sub:
+        shape === 'debt'
+          ? 'O valor de uma parcela, não o total da dívida.'
+          : 'Se o valor muda um pouco, coloque o mais comum. Dá para ajustar quando lançar.',
+    },
+    day: {
+      title:
+        shape === 'in' ? 'Que dia do mês costuma cair?' : shape === 'debt' ? 'Que dia vence a parcela?' : 'Que dia do mês vence?',
+      sub: 'Toque no dia. Dia 31 cai no último dia dos meses mais curtos.',
+    },
+    details: {
+      title: shape === 'debt' ? 'Conte um pouco sobre ela' : 'Como você chama isso?',
+      sub: shape === 'debt' ? 'De que lado você está, e o nome que aparece no razão.' : 'É o nome que aparece no seu razão.',
+    },
+    parcels: {
+      title: 'Quantas parcelas são?',
+      sub: 'Conte também as que já foram pagas antes de cadastrar aqui.',
+    },
+    review: { title: 'Confira e crie', sub: 'É assim que vai aparecer nas suas fixas.' },
+  };
+
+  const entering = dir.current > 0 ? FROM_RIGHT : dir.current < 0 ? FROM_LEFT : undefined;
+
+  return (
+    <>
+      <BackBar onPress={back} />
+      <View style={styles.progress}>
+        <View style={styles.progressTrack}>
+          <Animated.View style={[styles.progressFill, filled]} />
+        </View>
+        <Txt variant="micro" t="faint" style={styles.progressLabel}>
+          {`passo ${index + 1} de ${steps.length}`}
+        </Txt>
+      </View>
+
+      <KeyboardAwareScrollView
+        style={styles.flex}
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Animated.View key={step} entering={entering}>
+          <Txt variant="title" f="sansSemibold" style={styles.stepTitle}>
+            {heading[step].title}
+          </Txt>
+          <Txt variant="body" t="muted" style={styles.stepSub}>
+            {heading[step].sub}
+          </Txt>
+
+          {step === 'kind' ? (
+            <View style={styles.kinds}>
+              {KINDS.map((k) => (
+                <Press
+                  key={k.key}
+                  onPress={() => {
+                    setShape(k.key);
+                    go(index + 1);
+                  }}
+                  scale={0.985}
+                  style={[styles.kind, shape === k.key && index > 0 ? styles.kindOn : null]}
+                  accessibilityLabel={`${k.title}. ${k.example}`}
+                >
+                  <View style={styles.kindText}>
+                    <Txt variant="body" f="sansMedium">
+                      {k.title}
+                    </Txt>
+                    <Txt variant="micro" t="faint" style={styles.kindExample}>
+                      {k.example}
+                    </Txt>
+                  </View>
+                  <ChevronRight tint={color.inkMuted} />
+                </Press>
+              ))}
+            </View>
+          ) : null}
+
+          {step === 'amount' ? (
+            <View style={styles.block}>
+              <MoneyField
+                label={shape === 'debt' ? 'Valor da parcela' : 'Valor por mês'}
+                cents={amount}
+                onChangeCents={setAmount}
+                autoFocus
+              />
+            </View>
+          ) : null}
+
+          {step === 'day' ? (
+            <DayGrid
+              value={dayOfMonth}
+              today={Number(today.slice(8))}
+              onPick={(n) => {
+                setDay(String(n));
+                // Picking is answering. The short beat lets the chosen day be seen before it moves on.
+                setTimeout(() => go(index + 1), 260);
+              }}
+            />
+          ) : null}
+
+          {step === 'details' ? (
+            <View style={styles.block}>
+              {shape === 'debt' ? (
+                <>
+                  <View style={styles.debtSides}>
+                    {([
+                      { key: 'out' as const, label: 'Eu devo' },
+                      { key: 'in' as const, label: 'Me devem' },
+                    ]).map((option) => (
+                      <Press
+                        key={option.key}
+                        onPress={() => setDebtDirection(option.key)}
+                        outerStyle={styles.debtSideHit}
+                        style={[styles.debtSide, debtDirection === option.key ? styles.debtSideOn : null]}
+                        accessibilityLabel={option.label}
+                        accessibilityState={{ selected: debtDirection === option.key }}
+                      >
+                        <Txt
+                          variant="label"
+                          f="sansMedium"
+                          t={debtDirection === option.key ? 'onInk' : 'muted'}
+                          center
+                        >
+                          {option.label}
+                        </Txt>
+                      </Press>
+                    ))}
+                  </View>
+                  <View style={styles.gap} />
+                </>
+              ) : null}
+
+              <Field
+                label="Nome"
+                value={title}
+                onChangeText={setTitle}
+                autoCapitalize="sentences"
+                maxLength={60}
+                placeholder={`Ex.: ${NAMES[shape][0]}`}
+              />
+              <Wrap
+                items={NAMES[shape]}
+                selected={NAMES[shape].includes(title.trim()) ? title.trim() : null}
+                onPick={setTitle}
+              />
+
+              {shape === 'debt' ? (
+                <>
+                  <View style={styles.gap} />
+                  <Field
+                    label={debtDirection === 'out' ? 'Para quem você deve (opcional)' : 'Quem deve para você (opcional)'}
+                    value={counterparty}
+                    onChangeText={setCounterparty}
+                    autoCapitalize="words"
+                    maxLength={80}
+                    placeholder="Nome da pessoa ou da loja"
+                  />
+                </>
+              ) : null}
+
+              <Txt variant="micro" f="sansMedium" t="muted" style={styles.groupLabel}>
+                CATEGORIA
+              </Txt>
+              <Wrap
+                items={categories.includes(category) ? categories : [category, ...categories]}
+                selected={category}
+                onPick={(c) => {
+                  touched.current = true;
+                  setCategory(c);
+                }}
+              />
+            </View>
+          ) : null}
+
+          {step === 'parcels' ? (
+            <View style={styles.block}>
+              <Counter
+                label="Total de parcelas"
+                value={totalCount ?? 0}
+                min={1}
+                max={480}
+                onChange={(n) => setTotal(String(n))}
+              />
+              <Counter
+                label="Já pagas"
+                value={paidCount}
+                min={0}
+                max={totalCount ?? 480}
+                onChange={(n) => setPaid(String(n))}
+              />
+              {totalCount !== null ? (
+                <Txt variant="body" t="muted" style={styles.parcelsSay}>
+                  {totalCount - paidCount === 0
+                    ? 'Todas pagas. Ela entra já quitada.'
+                    : `Faltam ${totalCount - paidCount} ${totalCount - paidCount === 1 ? 'parcela' : 'parcelas'}.`}
+                </Txt>
+              ) : null}
+            </View>
+          ) : null}
+
+          {step === 'review' && preview ? (
+            <Review preview={preview} shape={shape} totalCount={totalCount} />
+          ) : null}
+
+          {step !== 'kind' ? (
+            <View style={styles.next}>
+              <Button
+                label={step === 'review' ? 'Criar recorrência' : 'Continuar'}
+                onPress={() => (step === 'review' ? onSave() : go(index + 1))}
+                disabled={!ok || saving}
+                loading={saving}
+              />
+            </View>
+          ) : null}
+        </Animated.View>
+      </KeyboardAwareScrollView>
+    </>
+  );
+}
+
+/**
+ * Choices that wrap onto the next line instead of running off the right edge. A row that bled past
+ * the screen read, on this step, as a page laid out wrong — every option should be seen at once.
+ */
+function Wrap({
+  items,
+  selected,
+  onPick,
+}: {
+  items: string[];
+  selected: string | null;
+  onPick: (item: string) => void;
+}) {
+  return (
+    <View style={styles.wrap}>
+      {items.map((item) => (
+        <Chip key={item} label={item} selected={selected === item} onPress={() => onPick(item)} />
+      ))}
+    </View>
+  );
+}
+
+/**
+ * A count set by tapping, with the figure large between − and +. Two empty numeric fields asked the
+ * owner to type a number before seeing one; this starts from a number and is nudged to the right one.
+ */
+function Counter({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <View style={styles.counter}>
+      <Txt variant="label" t="muted">
+        {label}
+      </Txt>
+      <View style={styles.counterRow}>
+        <Press
+          onPress={() => onChange(Math.max(min, value - 1))}
+          disabled={value <= min}
+          haptic="light"
+          scale={0.9}
+          style={styles.counterBtn}
+          accessibilityLabel={`Menos uma em ${label}`}
+        >
+          <Txt variant="title" f="mono" t={value <= min ? 'faint' : 'ink'} center>
+            −
+          </Txt>
+        </Press>
+        {/* The figure is also a field: tap it and type 48 instead of pressing + forty-eight times. */}
+        <TextInput
+          value={String(value)}
+          onChangeText={(t) => {
+            const n = Number(t.replace(/D/g, '').slice(0, 3));
+            if (t.replace(/D/g, '') !== '') onChange(Math.min(max, Math.max(min, n)));
+          }}
+          keyboardType="number-pad"
+          selectTextOnFocus
+          maxLength={3}
+          style={styles.counterValue}
+          accessibilityLabel={label}
+        />
+        <Press
+          onPress={() => onChange(Math.min(max, value + 1))}
+          disabled={value >= max}
+          haptic="light"
+          scale={0.9}
+          style={styles.counterBtn}
+          accessibilityLabel={`Mais uma em ${label}`}
+        >
+          <Txt variant="title" f="mono" t={value >= max ? 'faint' : 'ink'} center>
+            +
+          </Txt>
+        </Press>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The month as a grid of days to tap. Typing "8" into a numeric field was the one step that asked
+ * the owner to translate a date into a number; here the number *is* the date. Today carries a ring,
+ * so "the 5th" has somewhere to be read against.
+ */
+function DayGrid({ value, today, onPick }: { value: number | null; today: number; onPick: (n: number) => void }) {
+  return (
+    <View style={styles.grid} accessibilityRole="radiogroup">
+      {Array.from({ length: 31 }, (_, i) => i + 1).map((n) => {
+        const on = value === n;
+        return (
+          <Press
+            key={n}
+            onPress={() => onPick(n)}
+            haptic="light"
+            scale={0.9}
+            hitSlop={0}
+            outerStyle={styles.cellHit}
+            style={[styles.cell, on ? styles.cellOn : n === today ? styles.cellToday : null]}
+            accessibilityLabel={`Dia ${n}`}
+            accessibilityState={{ selected: on }}
+          >
+            <Txt variant="body" f="mono" t={on ? 'onInk' : 'ink'} center tabular>
+              {n}
+            </Txt>
+          </Press>
+        );
+      })}
+    </View>
+  );
+}
+
+/** The rule read back as it will appear: name, figure, when, where, and what it adds up to. */
+function Review({
+  preview,
+  shape,
+  totalCount,
+}: {
+  preview: { draft: Series; commitment: ReturnType<typeof commitmentFor> };
+  shape: Shape;
+  totalCount: number | null;
+}) {
+  const { draft, commitment } = preview;
+  return (
+    <View style={styles.block}>
+      <View style={styles.reviewHead}>
+        <Txt variant="heading" f="sansSemibold" numberOfLines={2}>
+          {draft.title}
+        </Txt>
+        <FlowAmount cents={draft.amountCents} direction={draft.direction} size="heading" />
+      </View>
+      <Fact label="quando" value={`todo dia ${draft.dayOfMonth}`} />
+      <Fact label="categoria" value={draft.category} />
+      {shape === 'debt' && commitment.remaining ? (
+        <Fact
+          label="faltam"
+          value={`${commitment.remaining.count} de ${totalCount} · ${brlShort(commitment.remaining.cents)}`}
+        />
+      ) : (
+        <Fact label="por ano" value={brlShort(commitment.yearCents)} />
+      )}
+      {shape === 'debt' && commitment.remaining ? (
+        <Txt variant="micro" t="faint" style={styles.hint}>
+          {`Termina em ${format(parseDay(commitment.remaining.finishes), "MMMM 'de' yyyy", { locale: ptBR })}.`}
+        </Txt>
+      ) : null}
+    </View>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.fact}>
+      <Txt variant="label" t="faint">
+        {label}
+      </Txt>
+      <Txt variant="body" numberOfLines={1}>
+        {value}
+      </Txt>
+    </View>
+  );
+}
+
 /**
  * The kind the draft should carry.
  *
@@ -682,4 +1288,76 @@ const styles = StyleSheet.create({
 
   remove: { paddingTop: space.xxl },
   removeNote: { paddingTop: space.xs },
+
+  // The steps.
+  progress: { paddingTop: space.sm },
+  progressTrack: { height: 2, borderRadius: 1, backgroundColor: color.hairline, overflow: 'hidden' },
+  progressFill: { height: 2, borderRadius: 1, backgroundColor: color.ink },
+  // A beat of air under the label, so the page scrolling up never touches it.
+  progressLabel: { paddingTop: space.sm, paddingBottom: space.md },
+  stepTitle: { paddingTop: space.lg },
+  stepSub: { paddingTop: space.sm },
+  block: { paddingTop: space.xl },
+  next: { paddingTop: space.xxl },
+
+  kinds: { paddingTop: space.xl, gap: space.md },
+  kind: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: space.lg,
+    paddingHorizontal: space.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.hairlineStrong,
+    borderRadius: radius.lg,
+  },
+  kindOn: { borderColor: color.ink },
+  kindText: { flex: 1, paddingRight: space.md },
+  kindExample: { paddingTop: space.xs },
+
+  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingTop: space.xl, rowGap: space.sm },
+  /* A seventh of the row each, so the month reads as a calendar's week rows. */
+  cellHit: { width: `${100 / 7}%`, alignItems: 'center' },
+  cell: { width: 44, height: 44, minHeight: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  cellOn: { backgroundColor: color.ink },
+  cellToday: { borderWidth: 1, borderColor: color.hairlineStrong },
+
+  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, paddingTop: space.md },
+  counter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: space.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.hairline,
+  },
+  counterRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  counterBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.hairlineStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  counterValue: {
+    minWidth: 64,
+    textAlign: 'center',
+    fontFamily: font.monoSemibold,
+    fontSize: type.title.size,
+    color: color.ink,
+    fontVariant: ['tabular-nums'],
+    padding: 0,
+  },
+  parcelsSay: { paddingTop: space.lg },
+
+  reviewHead: { paddingBottom: space.lg, gap: space.sm },
+  fact: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.hairline,
+  },
 });

@@ -15,7 +15,7 @@ import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
 import { Wordmark } from '@/ui/Wordmark';
 import { Amount } from '@/ui/Amount';
-import { useTabBarClearance } from '@/ui/TabBar';
+import { onTabScroll, useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
@@ -335,6 +335,8 @@ function RazaoBody() {
 
       {plan && plan.rows.length > 0 ? (
         <FlatList
+          onScroll={onTabScroll}
+          scrollEventThrottle={16}
           ref={list}
           style={styles.flex}
           data={plan.rows}

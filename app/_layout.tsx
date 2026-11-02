@@ -152,7 +152,8 @@ export default function RootLayout() {
                 <Stack.Screen name="calendario" />
                 <Stack.Screen name="notificacoes" />
                 <Stack.Screen name="dados" />
-                <Stack.Screen name="recorrencias" />
+                {/* A tab since recorrências got a place of their own: no native animation, like the others. */}
+                <Stack.Screen name="recorrencias" options={{ animation: 'none' }} />
                 <Stack.Screen name="tetos" />
                 <Stack.Screen name="categorias" />
                 <Stack.Screen name="recorrencia" />

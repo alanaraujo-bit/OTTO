@@ -15,7 +15,7 @@ import { ChevronRight } from '@/ui/Icon';
 import { Wordmark } from '@/ui/Wordmark';
 import { Amount } from '@/ui/Amount';
 import { Press } from '@/ui/Press';
-import { useTabBarClearance } from '@/ui/TabBar';
+import { onTabScroll, useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { PaceBars, type PaceDatum } from '@/ui/chart/PaceBars';
 import { Txt } from '@/theme/text';
@@ -107,6 +107,8 @@ function AnaliseBody() {
   return (
     <>
       <ScrollView
+        onScroll={onTabScroll}
+        scrollEventThrottle={16}
         style={styles.flex}
         contentContainerStyle={[styles.scroll, { paddingBottom: clearance }]}
         showsVerticalScrollIndicator={false}

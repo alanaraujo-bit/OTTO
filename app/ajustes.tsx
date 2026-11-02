@@ -14,7 +14,7 @@ import { Reveal } from '@/ui/Reveal';
 import { Press } from '@/ui/Press';
 import { Wordmark } from '@/ui/Wordmark';
 import { ChevronRight } from '@/ui/Icon';
-import { useTabBarClearance } from '@/ui/TabBar';
+import { onTabScroll, useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
@@ -71,7 +71,6 @@ function AjustesBody() {
   const enable = useLock((s) => s.enable);
   const disable = useLock((s) => s.disable);
 
-  const series = useLedger((s) => s.series);
   const accounts = useLedger((s) => s.accounts);
   const caps = useLedger((s) => s.caps);
   const load = useLedger((s) => s.load);
@@ -121,20 +120,18 @@ function AjustesBody() {
       accounts:
         `${holding} ${holding === 1 ? 'conta' : 'contas'}` +
         (cards > 0 ? ` · ${cards} ${cards === 1 ? 'cartão' : 'cartões'}` : ''),
-      series:
-        series.length === 0
-          ? 'salário, aluguel, assinaturas e parcelas'
-          : `${series.length} ${series.length === 1 ? 'cadastrada' : 'cadastradas'} · salário, aluguel, parcelas`,
       caps:
         caps.length === 0
           ? 'o máximo que você aceita gastar por categoria'
           : `${caps.length} ${caps.length === 1 ? 'categoria com teto' : 'categorias com teto'}`,
     };
-  }, [accounts, series, caps]);
+  }, [accounts, caps]);
 
   return (
     <>
       <ScrollView
+        onScroll={onTabScroll}
+        scrollEventThrottle={16}
         style={styles.flex}
         contentContainerStyle={[styles.scroll, { paddingBottom: clearance }]}
         showsVerticalScrollIndicator={false}
@@ -180,11 +177,6 @@ function AjustesBody() {
             title="Contas e cartões"
             hint={count.accounts}
             onPress={() => router.push('/contas')}
-          />
-          <Door
-            title="Recorrências"
-            hint={count.series}
-            onPress={() => router.push('/recorrencias')}
           />
           <Door
             title="Categorias"

@@ -113,6 +113,16 @@ export function NavStats({ size = 22, tint = color.ink }: IconProps) {
   );
 }
 
+/** What comes round again: a loop that closes on its own arrowhead, open stroke like the rest. */
+export function NavFixed({ size = 22, tint = color.ink }: IconProps) {
+  return (
+    <Svg {...base(size)}>
+      <Stroke d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v3.2h-3.2" tint={tint} />
+      <Stroke d="M12 8.5V12l2.4 1.6" tint={tint} />
+    </Svg>
+  );
+}
+
 /** Sliders rather than a gear: the same open stroke as the rest of the set, where a gear is a fill. */
 export function NavSettings({ size = 22, tint = color.ink }: IconProps) {
   return (

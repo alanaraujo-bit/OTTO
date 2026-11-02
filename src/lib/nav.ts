@@ -3,12 +3,13 @@ import { create } from 'zustand';
 import { isStatementSeries } from '@/domain/settlement';
 
 /** The tabs, in the order they sit in the bar. The order *is* the geometry. */
-export const TABS = ['home', 'ledger', 'stats', 'settings'] as const;
+export const TABS = ['home', 'ledger', 'fixed', 'stats', 'settings'] as const;
 export type TabKey = (typeof TABS)[number];
 
 const ROUTE = {
   home: '/home',
   ledger: '/razao',
+  fixed: '/recorrencias',
   stats: '/analise',
   settings: '/ajustes',
 } as const satisfies Record<TabKey, string>;

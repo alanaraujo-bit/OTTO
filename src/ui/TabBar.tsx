@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState, type ComponentType, type RefObject } from 'react';
-import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import {
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, usePathname } from 'expo-router';
 import Animated, {
+  makeMutable,
   useAnimatedStyle,
   useSharedValue,
   withSequence,
@@ -14,7 +21,7 @@ import Animated, {
 import { Txt } from '@/theme/text';
 import { color, radius, space } from '@/theme/tokens';
 import { duration, ease, useReducedMotion } from '@/theme/motion';
-import { NavHome, NavLedger, NavPlus, NavSettings, NavStats } from './Icon';
+import { NavFixed, NavHome, NavLedger, NavPlus, NavSettings, NavStats } from './Icon';
 import { Press } from './Press';
 import { TABS, useNav, type TabKey } from '@/lib/nav';
 
@@ -29,6 +36,9 @@ interface Slot {
 const SLOTS: Record<TabKey, Slot> = {
   home: { key: 'home', label: 'início', icon: NavHome },
   ledger: { key: 'ledger', label: 'razão', icon: NavLedger },
+  // "fixas": saídas fixas, entradas fixas, parcelas — the one short word that covers all three and
+  // still fits a fifth of the capsule. The rules that produce the month, beside the month itself.
+  fixed: { key: 'fixed', label: 'fixas', icon: NavFixed },
   stats: { key: 'stats', label: 'análise', icon: NavStats },
   settings: { key: 'settings', label: 'ajustes', icon: NavSettings },
 };
@@ -37,6 +47,7 @@ const SLOTS: Record<TabKey, Slot> = {
 const ROUTE_TAB: Record<string, TabKey> = {
   '/home': 'home',
   '/razao': 'ledger',
+  '/recorrencias': 'fixed',
   '/analise': 'stats',
   '/ajustes': 'settings',
 };
@@ -61,6 +72,63 @@ function useLift() {
 }
 
 /**
+ * The bar steps aside while the owner reads, and comes back the moment they might want it.
+ *
+ * Scrolling down a list is reading; the capsule and the actuator floating over the content are, for
+ * that moment, only in the way. So a downward scroll tucks them below the screen, and any scroll
+ * back up brings them home — the gesture of "I want to go somewhere" is already the upward flick. At
+ * the very top and the very end of a list they always return: the top is where navigation starts,
+ * and the end is where the reading is done.
+ *
+ * It answers travel, not jitter: the finger has to move ~30dp one way before the bar reacts, so a
+ * thumb settling on a row never makes it blink. Changing tab always brings it back.
+ *
+ * One value for the whole app, because there is one bar. It lives outside React so a scroll event
+ * can move it without re-rendering anything; the animation itself runs on the UI thread.
+ */
+const tucked = makeMutable(0);
+let lastY = 0;
+let travel = 0;
+let aimedTuck = 0;
+
+function tuck(to: 0 | 1) {
+  if (to === aimedTuck) return;
+  aimedTuck = to;
+  tucked.value = withTiming(to, {
+    duration: to ? duration.route : duration.state,
+    easing: ease.out,
+  });
+}
+
+/** Brings the bar back, and forgets the scroll it was hiding for. */
+export function showTabBar() {
+  lastY = 0;
+  travel = 0;
+  tuck(0);
+}
+
+/** Every tab screen's scroll view reports here (`onScroll`, with `scrollEventThrottle={16}`). */
+export function onTabScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
+  const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+  const y = contentOffset.y;
+  const dy = y - lastY;
+  lastY = y;
+  if (dy === 0) return;
+  // A jump, not a scroll: the razão opening on today, a list landing where it was sent.
+  if (Math.abs(dy) > 600) {
+    travel = 0;
+    return;
+  }
+  if (Math.sign(dy) !== Math.sign(travel)) travel = 0;
+  travel += dy;
+
+  const atTop = y <= 24;
+  const atEnd = y + layoutMeasurement.height >= contentSize.height - 24;
+  if (atTop || atEnd || travel < -12) tuck(0);
+  else if (travel > 30) tuck(1);
+}
+
+/**
  * How much room a scrolling tab screen must leave under its last row.
  *
  * The bar floats over the content instead of sitting below it, so without this the end of every
@@ -79,7 +147,7 @@ export function useTabBarClearance() {
  * that stays can answer the finger: the lens leaves the moment the tab is chosen, and the content
  * catches up underneath it. It fades away whenever the route is not a tab.
  *
- * Two pieces, the way the platform's own floating bars are built: a capsule holding the four
+ * Two pieces, the way the platform's own floating bars are built: a capsule holding the five
  * destinations, and beside it the actuator. Recording is the product — PRODUCT.md puts
  * time-to-record above everything else — so it is not a fifth destination squeezed into the row. It
  * is the one filled ink object on the screen, under the right thumb, and it never moves.
@@ -115,6 +183,10 @@ export function TabBar({ blurTarget }: { blurTarget?: RefObject<View | null> }) 
       useNav.setState({ current: routeTab, from: null, direction: 0 });
     }
   }, [routeTab]);
+
+  useEffect(() => {
+    showTabBar();
+  }, [pathname]);
 
   const visible = routeTab != null;
   const shown = useSharedValue(visible ? 1 : 0);
@@ -158,12 +230,16 @@ export function TabBar({ blurTarget }: { blurTarget?: RefObject<View | null> }) 
     requestAnimationFrame(() => go(key));
   };
 
+  // Tucked, the dock slides past the bottom edge; under reduced motion it fades out where it is.
+  const away = BAR + lift + space.xl;
   const dock = useAnimatedStyle(() => ({
-    opacity: shown.value,
-    transform: [{ translateY: reduced ? 0 : (1 - shown.value) * 24 }],
+    opacity: shown.value * (reduced ? 1 - tucked.value : 1),
+    transform: [
+      { translateY: reduced ? 0 : (1 - shown.value) * 24 + tucked.value * away },
+    ],
   }));
 
-  const fade = useAnimatedStyle(() => ({ opacity: shown.value }));
+  const fade = useAnimatedStyle(() => ({ opacity: shown.value * (1 - tucked.value) }));
 
   const lens = useAnimatedStyle(() => ({
     width: slotWidth,

@@ -20,7 +20,7 @@ import { MonthStepper, useMonthSwipe } from '@/ui/MonthStepper';
 import { MonthFlow } from '@/ui/MonthFlow';
 import { Press } from '@/ui/Press';
 import { Ask } from '@/ui/Icon';
-import { useTabBarClearance } from '@/ui/TabBar';
+import { onTabScroll, useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { BalanceCurve } from '@/ui/chart/BalanceCurve';
 import { CategoryDonut, type DonutSlice } from '@/ui/chart/CategoryDonut';
@@ -299,6 +299,8 @@ function HomeBody() {
   return (
     <>
       <ScrollView
+        onScroll={onTabScroll}
+        scrollEventThrottle={16}
         style={styles.flex}
         contentContainerStyle={[styles.scroll, { paddingBottom: clearance }]}
         showsVerticalScrollIndicator={false}
