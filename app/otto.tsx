@@ -1,16 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  View,
-} from 'react-native';
+import { Keyboard, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorderState, type AudioRecorder } from 'expo-audio';
 import Animated, {
   FadeIn,
+  ZoomIn,
+  useAnimatedKeyboard,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -26,7 +22,7 @@ import { Amount } from '@/ui/Amount';
 import { ArrowUp, Check, Close, Mic } from '@/ui/Icon';
 import { Txt } from '@/theme/text';
 import { color, font, HIT, space, type } from '@/theme/tokens';
-import { lineIn, listLayout, rowIn, rowOut, useReducedMotion } from '@/theme/motion';
+import { duration, lineIn, listLayout, rowIn, rowOut, useReducedMotion } from '@/theme/motion';
 import { useLedger } from '@/state/ledger';
 import { useSession } from '@/lib/auth/session';
 import { useChat, type Bubble } from '@/assistant/chat';
@@ -93,7 +89,30 @@ function OttoBody() {
   const deferrals = useLedger((s) => s.deferralsBySlot);
 
   const [draft, setDraft] = useState('');
+  const [focused, setFocused] = useState(false);
   const scroll = useRef<ScrollView>(null);
+
+  /*
+   * The composer rides the keyboard.
+   *
+   * The app pans the whole window for an open keyboard (adjustPan), which suits a form — the field
+   * being typed into stays in view — and is wrong for a conversation: the header, the way back and
+   * the oldest messages were pushed off the top of the screen, and a dead band opened between the
+   * last message and the field. Here the keyboard's own height, frame by frame, becomes room under
+   * the composer, so the field sits on the keyboard, the thread shrinks above it, and nothing else
+   * moves. Closed, it floats clear of the gesture strip the way the tab bar does.
+   */
+  const insets = useSafeAreaInsets();
+  const keyboard = useAnimatedKeyboard({ isStatusBarTranslucentAndroid: true, isNavigationBarTranslucentAndroid: true });
+  const rest = Math.max(insets.bottom, space.xl) - insets.bottom + space.xs;
+  const lifted = useAnimatedStyle(() => ({
+    paddingBottom: Math.max(rest, keyboard.height.value - insets.bottom + space.sm),
+  }));
+  // The newest message stays in view when the keyboard takes half the screen.
+  useEffect(() => {
+    const sub = Keyboard.addListener('keyboardDidShow', () => scroll.current?.scrollToEnd({ animated: true }));
+    return () => sub.remove();
+  }, []);
   // Dictation adds to what is already typed rather than replacing it, within the input's own limit.
   const dictation = useDictation((text) =>
     setDraft((d) => (d.trim() ? `${d.trimEnd()} ${text}` : text).slice(0, MAX_DRAFT)),
@@ -125,10 +144,7 @@ function OttoBody() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={styles.flex}>
       <View style={styles.bar}>
         <BackBar />
         <Txt variant="body" f="sansSemibold" style={styles.barTitle}>
@@ -230,54 +246,72 @@ function OttoBody() {
         ) : null}
       </ScrollView>
 
-      <View style={styles.composer}>
-        {dictation.phase === 'recording' ? (
-          <Recording recorder={dictation.recorder} onCancel={dictation.cancel} onDone={dictation.finish} />
-        ) : dictation.phase === 'transcribing' ? (
-          <Transcribing />
-        ) : (
-          <>
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              placeholder="Pergunte ao Otto"
-              placeholderTextColor={color.inkFaint}
-              style={styles.input}
-              multiline
-              maxLength={MAX_DRAFT}
-              selectionColor={color.ink}
-              cursorColor={color.ink}
-              accessibilityLabel="Mensagem para o Otto"
-              onSubmitEditing={() => submit(draft)}
-              submitBehavior="submit"
-              returnKeyType="send"
-            />
-            {canDictate ? (
-              <Press
-                onPress={() => void dictation.start()}
-                disabled={dictation.phase !== 'idle'}
-                haptic="light"
-                style={styles.send}
-                accessibilityLabel="Falar em vez de digitar"
-                accessibilityState={{ disabled: dictation.phase !== 'idle' }}
-              >
-                <Mic tint={color.inkMuted} />
-              </Press>
-            ) : null}
-            <Press
-              onPress={() => submit(draft)}
-              disabled={!canSend}
-              haptic="light"
-              style={styles.send}
-              accessibilityLabel="Enviar"
-              accessibilityState={{ disabled: !canSend }}
-            >
-              <ArrowUp tint={canSend ? color.ink : color.inkFaint} />
-            </Press>
-          </>
-        )}
-      </View>
-    </KeyboardAvoidingView>
+      <Animated.View style={[styles.dock, lifted]}>
+        {/*
+          A field that looks like one. The old composer was a hairline and a placeholder at the very
+          foot of the screen, which read as the end of the page rather than as the place to type. A
+          raised capsule with a lit edge while focused is the one surface on this screen that asks
+          for the thumb, and the action at its end changes with what can be done: speak when it is
+          empty, send once there is something to send.
+        */}
+        <View style={[styles.composer, focused ? styles.composerOn : null]}>
+          {dictation.phase === 'recording' ? (
+            <Recording recorder={dictation.recorder} onCancel={dictation.cancel} onDone={dictation.finish} />
+          ) : dictation.phase === 'transcribing' ? (
+            <Transcribing />
+          ) : (
+            <>
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
+                placeholder="Pergunte ou peça algo ao Otto"
+                placeholderTextColor={color.inkFaint}
+                style={styles.input}
+                multiline
+                maxLength={MAX_DRAFT}
+                selectionColor={color.ink}
+                cursorColor={color.ink}
+                accessibilityLabel="Mensagem para o Otto"
+                onSubmitEditing={() => submit(draft)}
+                submitBehavior="submit"
+                returnKeyType="send"
+              />
+              {canSend || !canDictate ? (
+                <Animated.View key="send" entering={ZoomIn.duration(duration.state)}>
+                  <Press
+                    onPress={() => submit(draft)}
+                    disabled={!canSend}
+                    haptic="light"
+                    scale={0.9}
+                    style={[styles.send, canSend ? styles.sendOn : null]}
+                    accessibilityLabel="Enviar"
+                    accessibilityState={{ disabled: !canSend }}
+                  >
+                    <ArrowUp tint={canSend ? color.onInk : color.inkFaint} />
+                  </Press>
+                </Animated.View>
+              ) : (
+                <Animated.View key="mic" entering={ZoomIn.duration(duration.state)}>
+                  <Press
+                    onPress={() => void dictation.start()}
+                    disabled={dictation.phase !== 'idle'}
+                    haptic="light"
+                    scale={0.9}
+                    style={styles.send}
+                    accessibilityLabel="Falar em vez de digitar"
+                    accessibilityState={{ disabled: dictation.phase !== 'idle' }}
+                  >
+                    <Mic tint={color.ink} />
+                  </Press>
+                </Animated.View>
+              )}
+            </>
+          )}
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -614,26 +648,42 @@ const styles = StyleSheet.create({
   error: { paddingTop: space.lg },
   retry: { alignSelf: 'flex-start' },
 
+  dock: { paddingTop: space.sm },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.hairline,
-    paddingTop: space.sm,
-    paddingBottom: space.sm,
+    minHeight: 56,
+    paddingLeft: space.lg,
+    paddingRight: 6,
+    paddingVertical: 6,
+    borderRadius: 28,
+    backgroundColor: color.surface,
+    borderWidth: 1,
+    borderColor: color.hairline,
   },
+  composerOn: { borderColor: color.hairlineStrong, backgroundColor: color.surfaceHi },
   input: {
     flex: 1,
-    minHeight: HIT,
-    maxHeight: 120,
+    minHeight: 44,
+    maxHeight: 132,
     color: color.ink,
     fontFamily: font.sans,
     fontSize: type.body.size,
     lineHeight: type.body.leading,
-    paddingVertical: space.md,
-    paddingRight: space.md,
+    paddingTop: 11,
+    paddingBottom: 11,
+    paddingRight: space.sm,
   },
-  send: { width: HIT, alignItems: 'center' },
+  send: {
+    width: 44,
+    height: 44,
+    minHeight: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // The one filled object in the conversation, and only while there is something to send.
+  sendOn: { backgroundColor: color.ink },
 
   dictation: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: HIT },
   level: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.xs },
