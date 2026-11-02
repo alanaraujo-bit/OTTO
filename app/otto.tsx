@@ -26,7 +26,7 @@ import { Amount } from '@/ui/Amount';
 import { ArrowUp, Check, Close, Mic } from '@/ui/Icon';
 import { Txt } from '@/theme/text';
 import { color, font, HIT, space, type } from '@/theme/tokens';
-import { useReducedMotion } from '@/theme/motion';
+import { lineIn, listLayout, rowIn, rowOut, useReducedMotion } from '@/theme/motion';
 import { useLedger } from '@/state/ledger';
 import { useSession } from '@/lib/auth/session';
 import { useChat, type Bubble } from '@/assistant/chat';
@@ -203,10 +203,19 @@ function OttoBody() {
           ))
         )}
 
-        {thinking ? <Typing /> : null}
+        {thinking ? (
+          <Animated.View entering={rowIn} exiting={rowOut} layout={listLayout}>
+            <Typing />
+          </Animated.View>
+        ) : null}
 
         {error ? (
-          <View style={styles.error} accessibilityLiveRegion="polite">
+          <Animated.View
+            entering={lineIn}
+            exiting={rowOut}
+            style={styles.error}
+            accessibilityLiveRegion="polite"
+          >
             <Txt variant="body" t="warning">
               {error.text}
             </Txt>
@@ -217,7 +226,7 @@ function OttoBody() {
                 </Txt>
               </Press>
             ) : null}
-          </View>
+          </Animated.View>
         ) : null}
       </ScrollView>
 
@@ -275,7 +284,7 @@ function OttoBody() {
 function Line({ bubble: b, gapAbove }: { bubble: Bubble; gapAbove: boolean }) {
   if (b.kind === 'user') {
     return (
-      <Animated.View entering={FadeIn.duration(180)} style={[styles.user, gapAbove && styles.gap]}>
+      <Animated.View entering={lineIn} layout={listLayout} style={[styles.user, gapAbove && styles.gap]}>
         <Txt variant="body" t="muted" style={styles.userText}>
           {b.text}
         </Txt>
@@ -285,7 +294,8 @@ function Line({ bubble: b, gapAbove }: { bubble: Bubble; gapAbove: boolean }) {
   if (b.kind === 'otto') {
     return (
       <Animated.View
-        entering={FadeIn.duration(260)}
+        entering={lineIn}
+        layout={listLayout}
         style={[styles.otto, gapAbove && styles.gap]}
         accessibilityLiveRegion="polite"
       >
@@ -371,7 +381,7 @@ function ActionCard({ bubble: b }: { bubble: Extract<Bubble, { kind: 'action' }>
   }, [state]);
 
   return (
-    <Animated.View entering={FadeIn.duration(220)} style={styles.card}>
+    <Animated.View entering={lineIn} layout={listLayout} style={styles.card}>
       <View style={[styles.cardRule, plan.destructive && styles.cardRuleDanger]} />
       <Txt
         variant="micro"

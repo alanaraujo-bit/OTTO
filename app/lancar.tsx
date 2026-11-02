@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import * as Crypto from 'expo-crypto';
 import { Screen } from '@/ui/Screen';
 import { BackBar } from '@/ui/BackBar';
@@ -16,7 +21,7 @@ import { categoryOrderFor, MAX_CENTS } from '@/ui/choices';
 import { MonthStepper } from '@/ui/MonthStepper';
 import { Txt } from '@/theme/text';
 import { color, radius, space } from '@/theme/tokens';
-import { duration } from '@/theme/motion';
+import { duration, ease, useReducedMotion } from '@/theme/motion';
 import { useSnackbar } from '@/ui/Snackbar';
 import { saidPlainly } from '@/lib/errors';
 import { useLedger } from '@/state/ledger';
@@ -309,6 +314,23 @@ export default function Lancar() {
   }, [settles, direction]);
 
   const money = parts(cents);
+
+  /*
+   * Each key moves the figure the way it changed it. A digit typed arrives from the right, so the
+   * readout gives a few dp of push from that side and settles; a backspace pulls it back from the
+   * left. Without it the keypad felt like it was editing a label rather than feeding a register.
+   */
+  const reduced = useReducedMotion();
+  const nudge = useSharedValue(0);
+  const lastCents = useRef(cents);
+  useEffect(() => {
+    const before = lastCents.current;
+    lastCents.current = cents;
+    if (reduced || before === cents) return;
+    nudge.value = cents > before ? 8 : -8;
+    nudge.value = withTiming(0, { duration: duration.state, easing: ease.out });
+  }, [cents, reduced, nudge]);
+  const pushed = useAnimatedStyle(() => ({ transform: [{ translateX: nudge.value }] }));
   const ready = cents > 0;
 
   /*
@@ -508,8 +530,8 @@ export default function Lancar() {
           space around the one thing this screen exists for.
         */}
         <Reveal index={1} {...ENTER} style={styles.readoutBlock}>
-          <View
-            style={styles.readout}
+          <Animated.View
+            style={[styles.readout, pushed]}
             accessibilityRole="text"
             accessibilityLabel={`Valor ${money.symbol} ${money.whole},${money.cents}`}
           >
@@ -527,7 +549,7 @@ export default function Lancar() {
             <Txt variant="body" f="mono" t="faint" tabular style={styles.decimals}>
               ,{money.cents}
             </Txt>
-          </View>
+          </Animated.View>
         </Reveal>
 
         {/*

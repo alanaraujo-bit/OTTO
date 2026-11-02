@@ -16,7 +16,7 @@ import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
 import { Wordmark } from '@/ui/Wordmark';
 import { Amount } from '@/ui/Amount';
-import { MonthStepper } from '@/ui/MonthStepper';
+import { MonthStepper, useMonthSwipe } from '@/ui/MonthStepper';
 import { MonthFlow } from '@/ui/MonthFlow';
 import { Press } from '@/ui/Press';
 import { Ask } from '@/ui/Icon';
@@ -27,7 +27,7 @@ import { CategoryDonut, type DonutSlice } from '@/ui/chart/CategoryDonut';
 import { DebtLadder } from '@/ui/chart/DebtLadder';
 import { Txt } from '@/theme/text';
 import { color, HIT, space } from '@/theme/tokens';
-import { spring, useReducedMotion } from '@/theme/motion';
+import { rowOut, spring, useReducedMotion } from '@/theme/motion';
 import { useLedger } from '@/state/ledger';
 import { forecastRoute, useNav } from '@/lib/nav';
 import { lookFor, ringCut } from '@/domain/category';
@@ -118,6 +118,9 @@ function HomeBody() {
       max: dayKey(startOfMonth(addMonths(t, 6))),
     };
   }, [entries, today]);
+
+  // The readout and the curve are the month, so a drag across them turns it as the stepper does.
+  const swipe = useMonthSwipe({ anchor, min: bounds.min, max: bounds.max, onChange: setAnchor });
 
   const view = useMemo(() => {
     if (!ready || error) return null;
@@ -333,6 +336,7 @@ function HomeBody() {
             min={bounds.min}
             max={bounds.max}
             onChange={setAnchor}
+            swipe={swipe}
           />
         </Reveal>
 
@@ -343,7 +347,7 @@ function HomeBody() {
           screen.
         */}
         {!ready && !error ? (
-          <Reveal index={2} {...ENTER.body}>
+          <Reveal index={2} {...ENTER.body} exiting={rowOut}>
             <View style={styles.hero}>
               <Txt variant="display" f="monoSemibold" t="faint" tabular>
                 —
@@ -374,65 +378,69 @@ function HomeBody() {
               only thing on it the owner can change, so it is the only thing that gets a transition.
             */}
             <Animated.View key={anchor} entering={FadeIn.duration(220)}>
-              <Reveal index={2} {...ENTER.body}>
-                {/*
-                  The figure is a sum of movements, so touching it opens them — the razão, landed on
-                  the day this figure is read at. Same reasoning as the two totals below it.
-                */}
-                <Press
-                  onPress={() =>
-                    go('ledger', {
-                      at:
-                        view.curve.era === 'current'
-                          ? today
-                          : view.curve.era === 'past'
-                            ? view.curve.to
-                            : view.curve.from,
-                    })
-                  }
-                  scale={0.99}
-                  outerStyle={styles.hero}
-                  accessibilityLabel={`${heroLabel(view.curve.era)}, ${brl(view.curve.balanceNow)}. Abrir no razão.`}
-                >
-                  <Amount
-                    cents={view.curve.balanceNow}
-                    size="hero"
-                    tone={view.curve.balanceNow < 0 ? 'negative' : 'ink'}
-                  />
-                  <View style={styles.heroRow}>
-                    <Txt variant="label" t="muted">
-                      {heroLabel(view.curve.era)}
-                    </Txt>
-                    {/* A coloured figure with no words beside it was a number asking to be decoded.
-                        It says which stretch it measured. */}
-                    {view.net !== 0 ? (
-                      <Txt variant="label" t="faint" numberOfLines={1}>
-                        <Txt
-                          variant="label"
-                          f="monoMedium"
-                          t={view.net < 0 ? 'negative' : 'positive'}
-                          tabular
-                        >
-                          {brlDelta(view.net)}
+              <GestureDetector gesture={swipe.pan()}>
+                <View>
+                  <Reveal index={2} {...ENTER.body}>
+                    {/*
+                      The figure is a sum of movements, so touching it opens them — the razão, landed on
+                      the day this figure is read at. Same reasoning as the two totals below it.
+                    */}
+                    <Press
+                      onPress={() =>
+                        go('ledger', {
+                          at:
+                            view.curve.era === 'current'
+                              ? today
+                              : view.curve.era === 'past'
+                                ? view.curve.to
+                                : view.curve.from,
+                        })
+                      }
+                      scale={0.99}
+                      outerStyle={styles.hero}
+                      accessibilityLabel={`${heroLabel(view.curve.era)}, ${brl(view.curve.balanceNow)}. Abrir no razão.`}
+                    >
+                      <Amount
+                        cents={view.curve.balanceNow}
+                        size="hero"
+                        tone={view.curve.balanceNow < 0 ? 'negative' : 'ink'}
+                      />
+                      <View style={styles.heroRow}>
+                        <Txt variant="label" t="muted">
+                          {heroLabel(view.curve.era)}
                         </Txt>
-                        {view.curve.era === 'current'
-                          ? ' no mês até hoje'
-                          : view.curve.era === 'past'
-                            ? ' no mês'
-                            : ' previsto no mês'}
-                      </Txt>
-                    ) : null}
-                  </View>
-                </Press>
-              </Reveal>
+                        {/* A coloured figure with no words beside it was a number asking to be decoded.
+                            It says which stretch it measured. */}
+                        {view.net !== 0 ? (
+                          <Txt variant="label" t="faint" numberOfLines={1}>
+                            <Txt
+                              variant="label"
+                              f="monoMedium"
+                              t={view.net < 0 ? 'negative' : 'positive'}
+                              tabular
+                            >
+                              {brlDelta(view.net)}
+                            </Txt>
+                            {view.curve.era === 'current'
+                              ? ' no mês até hoje'
+                              : view.curve.era === 'past'
+                                ? ' no mês'
+                                : ' previsto no mês'}
+                          </Txt>
+                        ) : null}
+                      </View>
+                    </Press>
+                  </Reveal>
 
-              <Reveal index={3} {...ENTER.body} rise={0} style={styles.plot}>
-                <View onLayout={onPlot}>
-                  {plotWidth > 0 ? (
-                    <BalanceCurve curve={view.curve} width={plotWidth} />
-                  ) : null}
+                  <Reveal index={3} {...ENTER.body} rise={0} style={styles.plot}>
+                    <View onLayout={onPlot}>
+                      {plotWidth > 0 ? (
+                        <BalanceCurve curve={view.curve} width={plotWidth} />
+                      ) : null}
+                    </View>
+                  </Reveal>
                 </View>
-              </Reveal>
+              </GestureDetector>
 
               <Reveal index={4} {...ENTER.body} style={styles.flowBlock}>
                 <MonthFlow

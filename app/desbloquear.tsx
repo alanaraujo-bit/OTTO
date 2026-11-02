@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Redirect, router, useLocalSearchParams } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
 import { Press } from '@/ui/Press';
@@ -57,6 +58,8 @@ export default function Desbloquear() {
     setAsking(true);
     const ok = await unlock();
     if (ok) {
+      // The latch giving way is felt: the one Success in the app that is not a form being saved.
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace((safeNext(next) ?? '/home') as never);
       return;
     }

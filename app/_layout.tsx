@@ -151,6 +151,7 @@ export default function RootLayout() {
                 <Stack.Screen name="contas" />
                 <Stack.Screen name="calendario" />
                 <Stack.Screen name="notificacoes" />
+                <Stack.Screen name="dados" />
                 <Stack.Screen name="recorrencias" />
                 <Stack.Screen name="tetos" />
                 <Stack.Screen name="categorias" />

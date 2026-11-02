@@ -13,7 +13,7 @@ import { Amount } from '@/ui/Amount';
 import { CategoryIcon } from '@/ui/CategoryIcon';
 import { Txt } from '@/theme/text';
 import { categoryHue, categoryHues, color, radius, space, type CategoryHue as Hue } from '@/theme/tokens';
-import { duration, useReducedMotion } from '@/theme/motion';
+import { duration, listLayout, rowOut, useReducedMotion } from '@/theme/motion';
 import { useSnackbar } from '@/ui/Snackbar';
 import { useLedger } from '@/state/ledger';
 import { setCap } from '@/db/repo';
@@ -212,29 +212,31 @@ function Body() {
         ) : null}
 
         {rows.map((row, i) => (
-          <Reveal key={row.view.name} index={Math.min(i + 2, ENTER.cap)} {...ENTER}>
-            {open === row.view.name ? (
-              <Editor
-                initial={row.view}
-                taken={taken}
-                onDone={async (message) => {
-                  setOpen(null);
-                  await load();
-                  if (message) snack(message, 'info');
-                }}
-                onCancel={() => setOpen(null)}
-                onError={(e) => snack(saidPlainly(e), 'error')}
-              />
-            ) : (
-              <Row
-                view={row.view}
-                spent={row.spent}
-                income={row.income}
-                burstsOn={row.reading?.burstsOn ?? null}
-                onPress={() => setOpen(row.view.name)}
-              />
-            )}
-          </Reveal>
+          <Animated.View key={row.view.name} layout={listLayout} exiting={rowOut}>
+            <Reveal index={Math.min(i + 2, ENTER.cap)} {...ENTER}>
+              {open === row.view.name ? (
+                <Editor
+                  initial={row.view}
+                  taken={taken}
+                  onDone={async (message) => {
+                    setOpen(null);
+                    await load();
+                    if (message) snack(message, 'info');
+                  }}
+                  onCancel={() => setOpen(null)}
+                  onError={(e) => snack(saidPlainly(e), 'error')}
+                />
+              ) : (
+                <Row
+                  view={row.view}
+                  spent={row.spent}
+                  income={row.income}
+                  burstsOn={row.reading?.burstsOn ?? null}
+                  onPress={() => setOpen(row.view.name)}
+                />
+              )}
+            </Reveal>
+          </Animated.View>
         ))}
       </KeyboardAwareScrollView>
     </>

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { listLayout, rowIn, rowOut } from '@/theme/motion';
 import { Screen } from '@/ui/Screen';
 import { BackBar } from '@/ui/BackBar';
 import { Reveal } from '@/ui/Reveal';
@@ -151,21 +153,23 @@ function Body() {
         ) : null}
 
         {rows.map((row, i) => (
-          <Reveal key={row.category} index={Math.min(i + 1, ENTER.cap)} {...ENTER}>
-            <Row
-              category={row.category}
-              reading={row.reading}
-              open={open === row.category}
-              draft={draft}
-              saving={saving}
-              onOpen={() => {
-                setOpen((prev) => (prev === row.category ? null : row.category));
-                setDraft(row.reading?.capCents ?? null);
-              }}
-              onDraft={setDraft}
-              onCommit={(cents) => void commit(row.category, cents)}
-            />
-          </Reveal>
+          <Animated.View key={row.category} layout={listLayout} exiting={rowOut}>
+            <Reveal index={Math.min(i + 1, ENTER.cap)} {...ENTER}>
+              <Row
+                category={row.category}
+                reading={row.reading}
+                open={open === row.category}
+                draft={draft}
+                saving={saving}
+                onOpen={() => {
+                  setOpen((prev) => (prev === row.category ? null : row.category));
+                  setDraft(row.reading?.capCents ?? null);
+                }}
+                onDraft={setDraft}
+                onCommit={(cents) => void commit(row.category, cents)}
+              />
+            </Reveal>
+          </Animated.View>
         ))}
       </KeyboardAwareScrollView>
     </>
@@ -264,7 +268,7 @@ function Row({
       </Press>
 
       {open ? (
-        <View style={styles.editor}>
+        <Animated.View entering={rowIn} exiting={rowOut} style={styles.editor}>
           {/* Typed the way lançar's keypad types: digits push in from the right, R$ stays on
               screen (TETO-02). Focused on open — choosing "definir" already said what comes next. */}
           <MoneyField
@@ -300,7 +304,7 @@ function Row({
               </Press>
             ) : null}
           </View>
-        </View>
+        </Animated.View>
       ) : null}
     </View>
   );

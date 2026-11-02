@@ -58,7 +58,9 @@ export function SnackbarHost({ children }: { children: ReactNode }) {
     seq.current += 1;
     setLeaving(false);
     setMsg({ id: seq.current, text, kind });
+    // An outcome is felt as well as read: a failure warns, a confirmation ("Conta salva.") taps once.
     if (kind === 'error') void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    else void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     timer.current = setTimeout(dismiss, kind === 'error' ? 3600 : 2800);
   }, [dismiss]);
 

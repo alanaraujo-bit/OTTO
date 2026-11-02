@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AccessibilityInfo } from 'react-native';
-import { Easing } from 'react-native-reanimated';
+import { Easing, FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 
 /**
  * OTTO's motion system.
@@ -57,6 +57,21 @@ export const spring = {
   /** Trails a moving target without ever snapping to it. For following a finger. */
   follow: { damping: 18, stiffness: 95, mass: 0.55 },
 } as const;
+
+/**
+ * A page that gains or loses a member. When a row is removed, an editor opens or a block appears,
+ * everything after it glides to its new place instead of jumping there — the ledger re-ruling
+ * itself around the change. Reanimated honours the system "Remove animations" setting for these.
+ */
+export const listLayout = LinearTransition.duration(duration.state).easing(ease.out);
+/** A row joining a list after the screen has arrived. */
+export const rowIn = FadeIn.duration(duration.state);
+/** A message landing in a conversation: it rises a few dp into place, like a line being written. */
+export const lineIn = FadeInDown.duration(duration.rule).easing(ease.out).withInitialValues({
+  transform: [{ translateY: 10 }],
+});
+/** A row leaving. Faster than it arrived, as every exit is. */
+export const rowOut = FadeOut.duration(duration.exit);
 
 /** Sibling stagger for the ruling sequence. Capped so the whole screen never feels slow. */
 export const stagger = (index: number, step = 55, cap = 6) =>

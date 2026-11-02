@@ -17,6 +17,9 @@ import { Wordmark } from '@/ui/Wordmark';
 import { Amount } from '@/ui/Amount';
 import { useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
+import { duration, ease } from '@/theme/motion';
 import { SwipeRow } from '@/ui/SwipeRow';
 import { Press } from '@/ui/Press';
 import { Txt } from '@/theme/text';
@@ -358,8 +361,10 @@ function RazaoBody() {
                     await deleteEntry(id);
                     void load();
                     snack('Lançamento excluído.', 'info');
+                    return true;
                   } catch (e) {
                     snack(saidPlainly(e), 'error');
+                    return false;
                   }
                 }}
               />
@@ -586,8 +591,26 @@ function ItemRow({
   height: number;
   /** The accounts that actually hold money — the only ones an antecipação may land in. */
   holding: Set<string>;
-  onDelete: (id: string) => Promise<void>;
+  onDelete: (id: string) => Promise<boolean>;
 }) {
+  /*
+   * A confirmed delete folds the row shut before the tape is read again, so the lançamento visibly
+   * leaves and its neighbours close over the gap — rather than the row blinking out on the reload.
+   * If the delete fails the row opens back up, because it is still there.
+   */
+  const gone = useSharedValue(0);
+  const folding = useAnimatedStyle(() => ({
+    height: height * (1 - gone.value),
+    opacity: 1 - gone.value,
+  }));
+  const remove = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    gone.value = withTiming(1, { duration: duration.state, easing: ease.out });
+    setTimeout(async () => {
+      if (!(await onDelete(item.key))) gone.value = withTiming(0, { duration: duration.state });
+    }, duration.state);
+  };
+
   /*
    * Excluir asks twice, the way lançar's "Apagar lançamento" does. The swipe is a gesture a thumb
    * makes by accident while scrolling the tape, so swipe-then-tap was one slip away from a lost
@@ -685,39 +708,42 @@ function ItemRow({
   }
 
   return (
-    <SwipeRow
-      height={height}
-      label="Editar lançamento"
-      actions={[
-        {
-          label: 'editar',
-          tone: 'muted',
-          onPress: () => router.push({ pathname: '/lancar', params: { id: item.key } }),
-        },
-        {
-          label: armed ? 'confirmar' : 'excluir',
-          tone: 'negative',
-          warn: armed,
-          keepOpen: !armed,
-          onPress: () => {
-            if (!armed) {
-              setArmed(true);
-              return;
-            }
-            setArmed(false);
-            void onDelete(item.key);
+    <Animated.View style={[styles.fold, folding]}>
+      <SwipeRow
+        height={height}
+        label="Editar lançamento"
+        actions={[
+          {
+            label: 'editar',
+            tone: 'muted',
+            onPress: () => router.push({ pathname: '/lancar', params: { id: item.key } }),
           },
-        },
-      ]}
-      onPress={() => router.push({ pathname: '/lancar', params: { id: item.key } })}
-    >
-      {body}
-    </SwipeRow>
+          {
+            label: armed ? 'confirmar' : 'excluir',
+            tone: 'negative',
+            warn: armed,
+            keepOpen: !armed,
+            onPress: () => {
+              if (!armed) {
+                setArmed(true);
+                return;
+              }
+              setArmed(false);
+              remove();
+            },
+          },
+        ]}
+        onPress={() => router.push({ pathname: '/lancar', params: { id: item.key } })}
+      >
+        {body}
+      </SwipeRow>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  fold: { overflow: 'hidden' },
   scroll: { paddingBottom: space.xxl },
 
   top: {

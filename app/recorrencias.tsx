@@ -1,5 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { listLayout, rowOut } from '@/theme/motion';
 import { router } from 'expo-router';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -208,34 +210,35 @@ function Group({
     <Reveal index={index} {...ENTER} rise={0}>
       <Section label={label} aside={brlShort(monthly)} unit="por mês" />
       {items.map((c) => (
-        <Press
-          key={c.series.id}
-          onPress={() => router.push({ pathname: '/recorrencia', params: { id: c.series.id } })}
-          style={styles.row}
-          accessibilityLabel={c.series.title}
-        >
-          <View style={styles.rowText}>
-            <Txt variant="body" numberOfLines={1}>
-              {c.series.title}
-            </Txt>
-            {/*
-              The figure this screen exists for. Set beside the ordinary monthly amount rather than
-              instead of it: the reader knows the monthly number already, and it is the second one
-              that changes a mind.
-            */}
-            {/* Numbers in mono, the words around them in sans — and the yearly figure muted, not
-                bold: it is the second reading of the row, never louder than the name. */}
-            <Txt variant="micro" t="faint" numberOfLines={1}>
-              dia {c.series.dayOfMonth} · {c.series.category} ·{' '}
-              <Txt variant="micro" f="mono" t="muted" tabular>
-                {brlShort(c.yearCents)}
+        <Animated.View key={c.series.id} layout={listLayout} exiting={rowOut}>
+          <Press
+            onPress={() => router.push({ pathname: '/recorrencia', params: { id: c.series.id } })}
+            style={styles.row}
+            accessibilityLabel={c.series.title}
+          >
+            <View style={styles.rowText}>
+              <Txt variant="body" numberOfLines={1}>
+                {c.series.title}
               </Txt>
-              {' por ano'}
-              {ends(c) ? ` · acaba em ${ends(c)}` : ''}
-            </Txt>
-          </View>
-          <FlowAmount cents={c.monthlyCents} direction={c.series.direction} />
-        </Press>
+              {/*
+                The figure this screen exists for. Set beside the ordinary monthly amount rather than
+                instead of it: the reader knows the monthly number already, and it is the second one
+                that changes a mind.
+              */}
+              {/* Numbers in mono, the words around them in sans — and the yearly figure muted, not
+                  bold: it is the second reading of the row, never louder than the name. */}
+              <Txt variant="micro" t="faint" numberOfLines={1}>
+                dia {c.series.dayOfMonth} · {c.series.category} ·{' '}
+                <Txt variant="micro" f="mono" t="muted" tabular>
+                  {brlShort(c.yearCents)}
+                </Txt>
+                {' por ano'}
+                {ends(c) ? ` · acaba em ${ends(c)}` : ''}
+              </Txt>
+            </View>
+            <FlowAmount cents={c.monthlyCents} direction={c.series.direction} />
+          </Press>
+        </Animated.View>
       ))}
     </Reveal>
   );

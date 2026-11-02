@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { listLayout, rowIn, rowOut } from '@/theme/motion';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import * as Crypto from 'expo-crypto';
@@ -203,7 +205,7 @@ function ContasBody() {
             <Reveal index={1} {...ENTER} rise={0}>
               <Section label="contas" />
               {view.holding.map((h) => (
-                <View key={h.account.id}>
+                <Animated.View key={h.account.id} layout={listLayout} exiting={rowOut}>
                   <Press
                     onPress={() => setEditing((p) => (p === h.account.id ? null : h.account.id))}
                     style={styles.row}
@@ -220,24 +222,26 @@ function ContasBody() {
                     <Amount cents={h.cents} size="body" tone={h.cents < 0 ? 'negative' : 'ink'} />
                   </Press>
                   {editing === h.account.id ? (
-                    <AccountForm
-                      initial={h.account}
-                      balanceCents={h.cents}
-                      entryCount={entries.filter((e) => e.accountId === h.account.id).length}
-                      blockDelete={view.holding.length <= 1}
-                      onSave={async (a) => {
-                        await updateAccount(a);
-                        await load();
-                        setEditing(null);
-                        snack('Conta salva.', 'info');
-                      }}
-                      onCancel={() => setEditing(null)}
-                      onDelete={async () => {
-                        await removeWithBiometry(h.account);
-                      }}
-                    />
+                    <Animated.View entering={rowIn} exiting={rowOut}>
+                      <AccountForm
+                        initial={h.account}
+                        balanceCents={h.cents}
+                        entryCount={entries.filter((e) => e.accountId === h.account.id).length}
+                        blockDelete={view.holding.length <= 1}
+                        onSave={async (a) => {
+                          await updateAccount(a);
+                          await load();
+                          setEditing(null);
+                          snack('Conta salva.', 'info');
+                        }}
+                        onCancel={() => setEditing(null)}
+                        onDelete={async () => {
+                          await removeWithBiometry(h.account);
+                        }}
+                      />
+                    </Animated.View>
                   ) : null}
-                </View>
+                </Animated.View>
               ))}
             </Reveal>
 
@@ -262,28 +266,30 @@ function ContasBody() {
             ) : null}
 
             {view.cards.map((c, i) => (
-              <Reveal key={c.account.id} index={3 + i} {...ENTER} rise={0}>
-                <Card
-                  account={c.account}
-                  cycle={c.cycle}
-                  used={c.used}
-                  use={c.use}
-                  items={c.items}
-                  today={today}
-                  editing={editing === c.account.id}
-                  entryCount={entries.filter((e) => e.accountId === c.account.id).length}
-                  onEdit={() => setEditing((p) => (p === c.account.id ? null : c.account.id))}
-                  onSave={async (next) => {
-                    await updateAccount(next);
-                    await load();
-                    setEditing(null);
-                    snack('Cartão salvo.', 'info');
-                  }}
-                  onDelete={async () => {
-                    await removeWithBiometry(c.account);
-                  }}
-                />
-              </Reveal>
+              <Animated.View key={c.account.id} layout={listLayout} exiting={rowOut}>
+                <Reveal index={3 + i} {...ENTER} rise={0}>
+                  <Card
+                    account={c.account}
+                    cycle={c.cycle}
+                    used={c.used}
+                    use={c.use}
+                    items={c.items}
+                    today={today}
+                    editing={editing === c.account.id}
+                    entryCount={entries.filter((e) => e.accountId === c.account.id).length}
+                    onEdit={() => setEditing((p) => (p === c.account.id ? null : c.account.id))}
+                    onSave={async (next) => {
+                      await updateAccount(next);
+                      await load();
+                      setEditing(null);
+                      snack('Cartão salvo.', 'info');
+                    }}
+                    onDelete={async () => {
+                      await removeWithBiometry(c.account);
+                    }}
+                  />
+                </Reveal>
+              </Animated.View>
             ))}
 
             {/*
@@ -293,7 +299,7 @@ function ContasBody() {
             */}
             <Reveal index={4 + view.cards.length} {...ENTER} rise={0}>
               {creatingNew ? (
-                <View style={styles.newBlock}>
+                <Animated.View entering={rowIn} exiting={rowOut} style={styles.newBlock}>
                   <Section label="nova conta" />
                   <AccountForm
                     initial={null}
@@ -307,17 +313,19 @@ function ContasBody() {
                     }}
                     onCancel={() => setCreatingNew(false)}
                   />
-                </View>
+                </Animated.View>
               ) : (
-                <Press
-                  onPress={startCreating}
-                  style={styles.row}
-                  accessibilityLabel="Nova conta ou cartão"
-                >
-                  <Txt variant="body" t="ink">
-                    + Nova conta ou cartão
-                  </Txt>
-                </Press>
+                <Animated.View entering={rowIn}>
+                  <Press
+                    onPress={startCreating}
+                    style={styles.row}
+                    accessibilityLabel="Nova conta ou cartão"
+                  >
+                    <Txt variant="body" t="ink">
+                      + Nova conta ou cartão
+                    </Txt>
+                  </Press>
+                </Animated.View>
               )}
             </Reveal>
           </>
@@ -597,18 +605,20 @@ function Card({
       {/* Right under the row that opened it, so it opens on screen rather than below the
           statement. The cycle and the purchases step aside while it is open. */}
       {editing ? (
-        <AccountForm
-          initial={account}
-          entryCount={entryCount}
-          blockDelete={false}
-          onSave={onSave}
-          onDelete={onDelete}
-          onCancel={onEdit}
-        />
+        <Animated.View entering={rowIn} exiting={rowOut}>
+          <AccountForm
+            initial={account}
+            entryCount={entryCount}
+            blockDelete={false}
+            onSave={onSave}
+            onDelete={onDelete}
+            onCancel={onEdit}
+          />
+        </Animated.View>
       ) : null}
 
       {cycle && !editing ? (
-        <>
+        <Animated.View entering={rowIn} exiting={rowOut}>
           <CycleRule cycle={cycle} today={today} />
 
           <View style={styles.cardFoot}>
@@ -689,7 +699,7 @@ function Card({
               ) : null}
             </View>
           )}
-        </>
+        </Animated.View>
       ) : null}
     </View>
   );

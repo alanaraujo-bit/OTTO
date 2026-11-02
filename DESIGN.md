@@ -90,10 +90,33 @@ Scale (sp, follows system font scaling):
 Tracking tightens as size grows; `display` sits at -0.04em, the floor.
 
 ## Motion
-One authored moment per screen, exponential ease-out from an already-visible default. Material
-shared-axis for route changes, container transform for expanding a row into detail. Honors the system
-"remove animations" setting. 120Hz target: everything animated runs on the UI thread via Reanimated
-worklets — no `setState` animation.
+The instrument is alive: it moves to report a change, never to decorate a still one. Exponential
+ease-out from an already-visible default. Honors the system "remove animations" setting. 120Hz
+target: everything animated runs on the UI thread via Reanimated worklets — no `setState` animation.
+
+Revised 2026-11-02, at Alan's request for an app that feels alive. "One authored moment per screen"
+is now *one authored entrance* per screen; every change after the entrance moves too:
+
+- **A figure moves to its new value.** Hero and heading amounts are an odometer: each digit is a
+  drum that rolls to its value, and a hero counts up from zero when it first appears. Body-size
+  figures in lists stay still, so a long list is never a wall of spinning digits.
+- **A page re-rules itself around a change.** Every `Reveal` block and every keyed list row glides
+  to its new place when a sibling appears, opens or leaves (`listLayout`). Rows and expanders fade in
+  and out (`rowIn` / `rowOut`); a placeholder gives way to the content instead of blinking out.
+- **What the finger touched answers.** Every control dims (and scales, unless motion is reduced);
+  a confirmed delete folds its row shut before the tape is read again; the keypad pushes the figure
+  from the side the digit came from.
+- **Outcomes are felt.** A saved or deleted thing taps once (light), a failure warns, the latch giving
+  way is a Success. A haptic always accompanies a visible change, never replaces one.
+- **Swipes turn the reading.** The month turns with a horizontal drag across its readout, the same
+  feel as the saídas/entradas ring. A swipe is never the only route: the chevrons stay.
+
+Still banned: bounce by reflex, motion that loops while nothing is happening (the typing dots are
+the one loop, and they mean "working"), and any figure that can rest on a wrong value — every
+odometer drum and every `Reveal` has a watchdog that sets the resting value outright.
+
+Material shared-axis for route changes and container transform for expanding a row into detail
+remain the target for routes; today the stack uses `ios_from_right` (see `app/_layout.tsx`).
 
 ## Layout constants (Edge 60 Fusion)
 - `gutter` 24dp horizontal — this is the curve-safe margin, not a taste choice.

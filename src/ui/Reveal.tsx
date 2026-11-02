@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, type ComponentProps, type ReactNode } from 'react';
 import type { ViewStyle } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -6,7 +6,7 @@ import Animated, {
   withDelay,
   withTiming,
 } from 'react-native-reanimated';
-import { duration, ease, stagger, useReducedMotion } from '@/theme/motion';
+import { duration, ease, listLayout, stagger, useReducedMotion } from '@/theme/motion';
 
 /**
  * The ruling sequence: siblings arrive in order, rising a few dp as they fade in.
@@ -28,6 +28,7 @@ export function Reveal({
   cap,
   ms,
   style,
+  exiting,
 }: {
   children: ReactNode;
   /** Position in the sequence. Delay is capped so a long screen never feels slow. */
@@ -61,6 +62,8 @@ export function Reveal({
    */
   ms?: number;
   style?: ViewStyle;
+  /** How the block leaves, when it leaves while the screen stays — a placeholder giving way. */
+  exiting?: ComponentProps<typeof Animated.View>['exiting'];
 }) {
   const reduced = useReducedMotion();
   const progress = useSharedValue(reduced ? 1 : 0);
@@ -90,5 +93,10 @@ export function Reveal({
     ],
   }));
 
-  return <Animated.View style={[style, animated]}>{children}</Animated.View>;
+  // After the entrance, a block that moves because a sibling changed glides to its new place.
+  return (
+    <Animated.View style={[style, animated]} layout={listLayout} exiting={exiting}>
+      {children}
+    </Animated.View>
+  );
 }

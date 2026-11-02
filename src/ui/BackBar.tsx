@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { HIT, space } from '@/theme/tokens';
 import { ArrowLeft } from './Icon';
 
@@ -16,11 +17,14 @@ export function BackBar({ onPress }: { onPress?: () => void }) {
   return (
     <View style={styles.row}>
       <Pressable
-        onPress={onPress ?? (() => (router.canGoBack() ? router.back() : router.replace('/sign-in')))}
+        onPress={() => {
+          void Haptics.selectionAsync();
+          (onPress ?? (() => (router.canGoBack() ? router.back() : router.replace('/sign-in'))))();
+        }}
         hitSlop={{ top: 8, bottom: 8, right: 12, left: 0 }}
         accessibilityRole="button"
         accessibilityLabel="Voltar"
-        style={styles.btn}
+        style={({ pressed }) => [styles.btn, pressed && styles.held]}
       >
         <ArrowLeft />
       </Pressable>
@@ -36,4 +40,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'center',
   },
+  /* Kept a plain Pressable for its one-sided hitSlop, so the answer to a touch is the same dip in
+     luminance Press gives, without its scale. */
+  held: { opacity: 0.55 },
 });

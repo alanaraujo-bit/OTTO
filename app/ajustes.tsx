@@ -13,19 +13,16 @@ import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
 import { Press } from '@/ui/Press';
 import { Wordmark } from '@/ui/Wordmark';
+import { ChevronRight } from '@/ui/Icon';
 import { useTabBarClearance } from '@/ui/TabBar';
 import { useTabEntrance } from '@/ui/useTabEntrance';
 import { Txt } from '@/theme/text';
 import { color, space } from '@/theme/tokens';
 import { duration, ease, spring, useReducedMotion } from '@/theme/motion';
 import { useSnackbar } from '@/ui/Snackbar';
-import { saidPlainly } from '@/lib/errors';
 import { useLock } from '@/lib/auth/lock';
 import { useSession } from '@/lib/auth/session';
 import { useLedger } from '@/state/ledger';
-import { clearLedger, deleteOttoAccount } from '@/db/repo';
-import { confirmDestructiveAction } from '@/lib/auth/lock';
-import { parseDay } from '@/domain/projection';
 
 /**
  * The only screen in this app that talks about the app rather than about the money.
@@ -42,8 +39,13 @@ import { parseDay } from '@/domain/projection';
  * layer all have to leave a screen that still says what is on and what is off.
  *
  * Everything here is a rule and a row. A settings screen is where an app usually grows its second
- * design system — inset cards, coloured icon tiles, chevrons — and none of that vocabulary exists in
- * this one.
+ * design system — inset cards, coloured icon tiles — and none of that vocabulary exists in this one.
+ * The one thing borrowed is the arrow on a row that opens a place, because it is the mark a
+ * first-time owner reads as "this goes somewhere" without being told.
+ *
+ * It is a map, in three groups by whose things they are: the money's parts, how the app behaves,
+ * and the account. Deleting things lives one level down, in Privacidade e dados, so this list never
+ * ends on a danger zone.
  */
 export default function Ajustes() {
   return (
@@ -69,25 +71,18 @@ function AjustesBody() {
   const enable = useLock((s) => s.enable);
   const disable = useLock((s) => s.disable);
 
-  const entries = useLedger((s) => s.entries);
   const series = useLedger((s) => s.series);
   const accounts = useLedger((s) => s.accounts);
+  const caps = useLedger((s) => s.caps);
   const load = useLedger((s) => s.load);
 
   const [busy, setBusy] = useState(false);
 
-  /**
-   * The destructive action arms itself and disarms on its own.
-   *
-   * Confirming in the row rather than in a system `Alert` keeps this app's one voice — there is no
-   * dialog anywhere else in it. But an armed state with no way out is a trap: leave it armed and the
-   * next stray tap on that row wipes the ledger. So it stands down after a few seconds, which is the
-   * cancel button a dialog would have had.
-   */
-  const [armed, setArmed] = useState<string | null>(null);
+  /** Sair arms first and stands down on its own, so one stray tap on the last row costs nothing. */
+  const [armed, setArmed] = useState(false);
   useEffect(() => {
     if (!armed) return;
-    const t = setTimeout(() => setArmed(null), 5000);
+    const t = setTimeout(() => setArmed(false), 5000);
     return () => clearTimeout(t);
   }, [armed]);
 
@@ -117,60 +112,25 @@ function AjustesBody() {
     }
   };
 
-  /**
-   * A second deliberate tap arms the OS biometric prompt; neither step alone can erase data.
-   *
-   * With no biometry enrolled the protection still holds — nothing is deleted — but the row says
-   * why up front and the tap explains what to do, instead of arming, failing silently at the OS, and
-   * then reporting "a biometria não foi confirmada" as if the owner had refused it (AJ-04).
-   */
-  const destroy = async (key: string, prompt: string, work: () => Promise<void>, done: string) => {
-    if (busy) return;
-    if (ready && !available) {
-      snack(
-        biometry?.hardware
-          ? 'Excluir pede sua biometria, e não há nenhuma cadastrada. Cadastre uma nas configurações do Android e volte aqui.'
-          : 'Excluir pede biometria, e este aparelho não tem sensor.',
-        'error',
-      );
-      return;
-    }
-    if (armed !== key) {
-      setArmed(key);
-      snack('Toque novamente para confirmar. A biometria será solicitada.', 'info');
-      return;
-    }
-    setArmed(null);
-    setBusy(true);
-    try {
-      const confirmed = await confirmDestructiveAction(prompt);
-      if (!confirmed) {
-        snack('Nada foi excluído: a biometria não confirmou.', 'error');
-        return;
-      }
-      await work();
-      snack(done, 'info');
-    } catch (error) {
-      snack(saidPlainly(error), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /** What the ledger holds, said plainly. The one place the app describes its own contents. */
-  const held = useMemo(() => {
-    const first = entries.reduce<string | null>(
-      (min, e) => (min === null || e.date < min ? e.date : min),
-      null,
-    );
+  /* Each door says what is behind it, in numbers where there are numbers, so the list reads as a
+     map of the app rather than as a column of names. */
+  const count = useMemo(() => {
+    const holding = accounts.filter((a) => a.kind !== 'card').length;
+    const cards = accounts.filter((a) => a.kind === 'card').length;
     return {
-      entries: entries.length,
-      series: series.length,
-      accounts: accounts.filter((a) => a.kind !== 'card').length,
-      cards: accounts.filter((a) => a.kind === 'card').length,
-      since: first ? format(parseDay(first), "MMMM 'de' yyyy", { locale: ptBR }) : null,
+      accounts:
+        `${holding} ${holding === 1 ? 'conta' : 'contas'}` +
+        (cards > 0 ? ` · ${cards} ${cards === 1 ? 'cartão' : 'cartões'}` : ''),
+      series:
+        series.length === 0
+          ? 'salário, aluguel, assinaturas e parcelas'
+          : `${series.length} ${series.length === 1 ? 'cadastrada' : 'cadastradas'} · salário, aluguel, parcelas`,
+      caps:
+        caps.length === 0
+          ? 'o máximo que você aceita gastar por categoria'
+          : `${caps.length} ${caps.length === 1 ? 'categoria com teto' : 'categorias com teto'}`,
     };
-  }, [entries, series, accounts]);
+  }, [accounts, series, caps]);
 
   return (
     <>
@@ -180,10 +140,8 @@ function AjustesBody() {
         showsVerticalScrollIndicator={false}
       >
         {/*
-          The mark at the same 22dp every other tab carries it at. It was drawn at 40 here, as the
-          subject rather than the letterhead — but switching tabs then made the header jump to
-          twice its size and back, which read as a different app (AJ-05). It still carries the
-          trinco's state; the line under it says the same in words.
+          The mark at the same 22dp every other tab carries it at. It still carries the trinco's
+          state; the line under it says the same in words.
         */}
         <Reveal index={0} {...ENTER.head}>
           <View style={styles.identity}>
@@ -209,25 +167,56 @@ function AjustesBody() {
           </View>
         </Reveal>
 
-        <Section label="proteção" />
-
         {/*
-          The trinco. The row says the state in words and the mark says it in the only other way this
-          app has; neither is decoration and neither is sufficient alone.
+          Three groups, by whose they are. The money's parts first, because they are what an owner
+          comes here for most; the app's behaviour second; the account itself last. These rows used
+          to be one list that ran from the trinco to "área de risco", and the parts of the app that
+          are not settings at all — accounts, the calendar — were filed under a heading nobody reads
+          as "where things are".
         */}
         <Reveal index={2} {...ENTER.body} rise={0}>
+          <Section label="seu dinheiro" />
+          <Door
+            title="Contas e cartões"
+            hint={count.accounts}
+            onPress={() => router.push('/contas')}
+          />
+          <Door
+            title="Recorrências"
+            hint={count.series}
+            onPress={() => router.push('/recorrencias')}
+          />
+          <Door
+            title="Categorias"
+            hint="nomes, ícones e cores"
+            onPress={() => router.push('/categorias')}
+          />
+          <Door title="Tetos de gasto" hint={count.caps} onPress={() => router.push('/tetos')} />
+          <Door
+            title="Calendário"
+            hint="o que entra, o que sai e o que vence, dia a dia"
+            onPress={() => router.push('/calendario')}
+          />
+        </Reveal>
+
+        <Reveal index={3} {...ENTER.body} rise={0}>
+          <Section label="segurança e avisos" />
+          {/*
+            The trinco. The row says the state in words and the mark says it in the only other way this
+            app has; neither is decoration and neither is sufficient alone.
+          */}
           <Press
             onPress={() => void toggle()}
             disabled={!ready || !available || busy}
             haptic="light"
             scale={0.995}
             style={styles.row}
-            accessibilityLabel="Exigir desbloqueio ao abrir o OTTO"
+            accessibilityLabel="Pedir biometria ao abrir o OTTO"
             accessibilityState={{ selected: enabled, disabled: !available }}
           >
             <View style={styles.rowText}>
               <Txt variant="body" t={available ? 'ink' : 'faint'}>
-                Exigir desbloqueio ao abrir
+                Pedir biometria ao abrir
               </Txt>
               <Txt variant="micro" t="faint">
                 {!ready
@@ -237,228 +226,70 @@ function AjustesBody() {
                     : !biometry.enrolled
                       ? 'nenhuma biometria cadastrada no aparelho'
                       : enabled
-                        ? `${biometry.name} · ligado`
+                        ? `${biometry.name} · ligado · vale ao abrir o app do zero`
                         : `${biometry.name} · desligado`}
               </Txt>
             </View>
             <Latch on={enabled} dim={!available} />
           </Press>
+          <Door
+            title="Avisos"
+            hint="o que merece uma notificação, e quando"
+            onPress={() => router.push('/notificacoes')}
+          />
         </Reveal>
 
-        {/* Said once, plainly, so the control never over-promises what it covers. */}
-        <Txt variant="micro" t="faint" style={styles.note}>
-          Vale ao abrir o app do zero. Trocar de tela ou voltar de outro aplicativo não pede de novo.
-        </Txt>
-
-        <Section label="avisos" />
-        <Press
-          onPress={() => router.push('/notificacoes')}
-          style={styles.row}
-          accessibilityLabel="Avisos inteligentes"
-        >
-          <View style={styles.rowText}>
-            <Txt variant="body">
-              Avisos inteligentes
-            </Txt>
-            <Txt variant="micro" t="faint">
-              escolha o que merece interromper você
-            </Txt>
-          </View>
-          <Txt variant="micro" t="muted">abrir</Txt>
-        </Press>
-
-        <Section label="organização financeira" />
-
-        <Press
-          onPress={() => router.push('/contas')}
-          style={styles.row}
-          accessibilityLabel="Contas e cartões"
-        >
-          <View style={styles.rowText}>
-            <Txt variant="body">Contas e cartões</Txt>
-            <Txt variant="micro" t="faint">
-              {held.accounts} {held.accounts === 1 ? 'conta' : 'contas'}
-              {held.cards > 0 ? ` · ${held.cards} ${held.cards === 1 ? 'cartão' : 'cartões'}` : ''}
-            </Txt>
-          </View>
-          <Txt variant="micro" t="muted">
-            abrir
-          </Txt>
-        </Press>
-
-        <Press
-          onPress={() => router.push('/categorias')}
-          style={styles.row}
-          accessibilityLabel="Categorias"
-        >
-          <View style={styles.rowText}>
-            <Txt variant="body">Categorias</Txt>
-            <Txt variant="micro" t="faint">
-              ícone, cor e o teto de cada uma
-            </Txt>
-          </View>
-          <Txt variant="micro" t="muted">
-            abrir
-          </Txt>
-        </Press>
-
-        <Press
-          onPress={() => router.push('/recorrencias')}
-          style={styles.row}
-          accessibilityLabel="Recorrências"
-        >
-          <View style={styles.rowText}>
-            <Txt variant="body">Recorrências</Txt>
-            <Txt variant="micro" t="faint">
-              o que se repete todo mês, e o que termina
-            </Txt>
-          </View>
-          <Txt variant="micro" t="muted">
-            abrir
-          </Txt>
-        </Press>
-
-        <Press
-          onPress={() => router.push('/calendario')}
-          style={styles.row}
-          accessibilityLabel="Calendário financeiro"
-        >
-          <View style={styles.rowText}>
-            <Txt variant="body">Calendário financeiro</Txt>
-            <Txt variant="micro" t="faint">
-              veja o que aconteceu, o que vem e o que venceu
-            </Txt>
-          </View>
-          <Txt variant="micro" t="muted">
-            abrir
-          </Txt>
-        </Press>
-
-        <Section label="seus dados" />
-
-        <View style={styles.facts}>
-          <Fact label="lançamentos" value={String(held.entries)} />
-          <Fact label="recorrências" value={String(held.series)} />
-          <Fact label={held.accounts === 1 ? 'conta' : 'contas'} value={String(held.accounts)} />
-          {held.cards > 0 ? (
-            <Fact label={held.cards === 1 ? 'cartão' : 'cartões'} value={String(held.cards)} />
-          ) : null}
-          {held.since ? <Fact label="desde" value={held.since} /> : null}
-        </View>
-
-        <Section label="área de risco" />
-
-        <Press
-          onPress={() => router.push('/contas')}
-          style={styles.row}
-          accessibilityLabel="Excluir conta bancária ou cartão"
-        >
-          {/* "conta bancária": a bare "conta" next to "Sair da conta" read as the OTTO login. */}
-          <View style={styles.rowText}>
-            <Txt variant="body" t="muted">
-              Excluir conta bancária ou cartão
-            </Txt>
-            <Txt variant="micro" t="faint">
-              escolha o item em Contas e cartões e confirme com biometria
-            </Txt>
-          </View>
-          <Txt variant="micro" t="muted">
-            abrir
-          </Txt>
-        </Press>
-
-        <Press
-          onPress={() => void destroy(
-            'all-data',
-            'Confirme para excluir todos os seus dados financeiros',
-            async () => { await clearLedger(); await load(); },
-            'Todos os dados financeiros foram excluídos.',
-          )}
-          disabled={busy}
-          style={styles.row}
-          accessibilityLabel={
-            armed === 'all-data' ? 'Toque de novo e confirme sua biometria' : 'Excluir todos os dados financeiros'
-          }
-        >
-          {/*
-            Red only once it is armed — the one moment red is allowed to mean something other than
-            money (a destructive action about to happen). At rest it was red permanently, which made
-            it the loudest row on the screen for an action nobody takes (AJ-05).
-          */}
-          <View style={styles.rowText}>
-            <Txt variant="body" t={armed === 'all-data' ? 'negative' : 'muted'}>
-              {armed === 'all-data' ? 'Toque de novo e confirme sua biometria' : 'Excluir todos os dados'}
-            </Txt>
-            <Txt variant="micro" t="faint">
-              {ready && !available
-                ? 'pede biometria: cadastre uma nas configurações do Android para poder excluir'
-                : armed === 'all-data'
-                  ? 'exclui contas, cartões, lançamentos e recorrências do banco'
-                  : 'mantém seu acesso, mas exclui seu razão definitivamente'}
-            </Txt>
-          </View>
-        </Press>
-
-        {/* Google Play requires an in-app path to delete the account itself, not only its data. */}
-        <Press
-          onPress={() => void destroy(
-            'account',
-            'Confirme para excluir sua conta OTTO',
-            async () => { await deleteOttoAccount(); await signOut(); router.replace('/sign-in'); },
-            'Sua conta OTTO foi excluída.',
-          )}
-          disabled={busy}
-          style={styles.row}
-          accessibilityLabel={
-            armed === 'account' ? 'Toque de novo e confirme sua biometria' : 'Excluir minha conta OTTO'
-          }
-        >
-          <View style={styles.rowText}>
-            <Txt variant="body" t={armed === 'account' ? 'negative' : 'muted'}>
-              {armed === 'account' ? 'Toque de novo e confirme sua biometria' : 'Excluir minha conta OTTO'}
-            </Txt>
-            <Txt variant="micro" t="faint">
-              {ready && !available
-                ? 'pede biometria: cadastre uma nas configurações do Android para poder excluir'
-                : 'apaga login, razão, dívidas compartilhadas e o uso do assistente'}
-            </Txt>
-          </View>
-        </Press>
-
-        <Section label="sessão" />
-
-        {/*
-          Signing out lives here now, and not at the far end of the home screen's scroll where it was
-          parked with a comment saying it would move when this screen existed.
-
-          It arms first, like every row in this screen that ends something: one stray tap on the last
-          row of the scroll should not cost the owner a login. No biometry — nothing is lost by
-          leaving, so the second tap is the whole confirmation.
-        */}
-        <Press
-          onPress={() => {
-            if (armed !== 'sign-out') {
-              setArmed('sign-out');
-              return;
-            }
-            setArmed(null);
-            void signOut();
-            router.replace('/sign-in');
-          }}
-          style={styles.row}
-          accessibilityLabel={armed === 'sign-out' ? 'Toque de novo para sair' : 'Sair da conta'}
-        >
-          <View style={styles.rowText}>
-            <Txt variant="body" t={armed === 'sign-out' ? 'ink' : 'muted'}>
-              {armed === 'sign-out' ? 'Toque de novo para sair' : 'Sair da conta'}
-            </Txt>
-            <Txt variant="micro" t="faint">
-                seu razão permanece protegido no banco
-            </Txt>
-          </View>
-        </Press>
+        <Reveal index={4} {...ENTER.body} rise={0}>
+          <Section label="sua conta" />
+          <Door
+            title="Privacidade e dados"
+            hint="o que está guardado, e como apagar"
+            onPress={() => router.push('/dados')}
+          />
+          {/* No biometry — nothing is lost by leaving, so the second tap is the whole confirmation. */}
+          <Press
+            onPress={() => {
+              if (!armed) {
+                setArmed(true);
+                return;
+              }
+              setArmed(false);
+              void signOut();
+              router.replace('/sign-in');
+            }}
+            style={styles.row}
+            accessibilityLabel={armed ? 'Toque de novo para sair' : 'Sair da conta'}
+          >
+            <View style={styles.rowText}>
+              <Txt variant="body" t={armed ? 'ink' : 'muted'}>
+                {armed ? 'Toque de novo para sair' : 'Sair da conta'}
+              </Txt>
+              <Txt variant="micro" t="faint">
+                seu razão continua guardado para quando você voltar
+              </Txt>
+            </View>
+          </Press>
+        </Reveal>
       </ScrollView>
     </>
+  );
+}
+
+/**
+ * A row that opens a place. The arrow is the one mark a first-time owner reads without being told:
+ * the old rows said "abrir" in micro type at the far edge, which looked like a caption, not a door.
+ */
+function Door({ title, hint, onPress }: { title: string; hint: string; onPress: () => void }) {
+  return (
+    <Press onPress={onPress} style={styles.row} accessibilityLabel={`${title}. ${hint}`}>
+      <View style={styles.rowText}>
+        <Txt variant="body">{title}</Txt>
+        <Txt variant="micro" t="faint" numberOfLines={1}>
+          {hint}
+        </Txt>
+      </View>
+      <ChevronRight tint={color.inkFaint} />
+    </Press>
   );
 }
 
@@ -505,24 +336,6 @@ function Section({ label }: { label: string }) {
   );
 }
 
-/**
- * One thing the ledger knows about itself. Figure first, in mono because it is a figure — and only
- * then: "setembro de 2026" is a date written as words, which is sans like every other word.
- */
-function Fact({ label, value }: { label: string; value: string }) {
-  const figure = /^\d+$/.test(value);
-  return (
-    <View style={styles.fact}>
-      <Txt variant="body" f={figure ? 'monoMedium' : 'sansMedium'} t="ink" tabular={figure}>
-        {value}
-      </Txt>
-      <Txt variant="micro" t="faint">
-        {label}
-      </Txt>
-    </View>
-  );
-}
-
 function providerLabel(p?: 'password' | 'google' | 'apple'): string {
   return p === 'google' ? 'Entrou com Google' : p === 'apple' ? 'Entrou com Apple' : 'E-mail e senha';
 }
@@ -551,7 +364,6 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
   },
   rowText: { flex: 1, paddingRight: space.lg },
-  note: { paddingTop: space.xs },
 
   /* A rule with a travelling segment on it, not a pill with a dot in it. This app answers "this one
      is chosen" with a rule everywhere else — the tab marker, the segmented control, the focus line
@@ -565,6 +377,4 @@ const styles = StyleSheet.create({
     borderRadius: 1,
   },
 
-  facts: { flexDirection: 'row', flexWrap: 'wrap', paddingTop: space.md, rowGap: space.lg },
-  fact: { width: '50%', paddingBottom: space.xs },
 });
