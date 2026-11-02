@@ -4,7 +4,7 @@ Arquivo de retomada. Se a sessão cair, comece por aqui.
 
 ---
 
-## Estado atual: **Fase 9.2 — todo número da Home leva ao que ele soma. APK 0.2.0 no ar.**
+## Estado atual: **Fase 11 — app vivo, fixas, avisos com ritmo e lançamento automático. APK 0.5.0 no ar.**
 
 Fases 0 a 4 fechadas. A Home foi aprovada por Alan no aparelho em 2026-09-02 e, junto com as telas
 de acesso, é a régua visual do resto do projeto.
@@ -1445,6 +1445,46 @@ atrasada; um APK anterior ao 0.3.0 mostra a âncora da fatura como "Fatura X R$ 
 
 ---
 
+## Fase 11 — um app vivo, organizado para quem chega, e que lança sozinho. APK 0.5.0
+
+Branch `otto-0.4`, um commit por frente:
+
+- **Movimento.** Valores grandes viram odômetro (`Amount`); `Reveal` e linhas de lista deslizam ao
+  mudar (`listLayout`, `rowIn`, `rowOut`); a exclusão no razão recolhe a linha; haptics em resultados.
+  O mês troca com o dedo pela faixa, saldo e gráfico da Home (`useMonthSwipe`). Regras no DESIGN.md.
+- **Intuitividade.** Análise em três abas (`RuleTabs`), sem jargão. Ajustes virou índice de três
+  blocos; exclusões foram para Privacidade e dados (`/dados`). Recorrências viraram a aba **fixas**,
+  com cadastro em passos (tipo, valor, dia em grade, nome, parcelas, revisão) e excluir na leitura.
+- **Barra que sai da frente.** Some ao rolar para baixo, volta ao subir, no topo, no fim e ao trocar
+  de aba (`onTabScroll`).
+- **Chat do Otto.** Compositor em cápsula que senta no teclado (`useAnimatedKeyboard`).
+- **Avisos com ritmo** (`rhythm.ts`, `npm run rhythm`): véspera de conta, dia de receber, conta
+  vencida sem lançar, semana, mês, mês no vermelho, lembrete de lançar. Ligados por padrão; convite na
+  Home pede a permissão; cinco interruptores por tipo; fila "o que vem por aí".
+- **Lançamento automático** (`capture.ts`, `modules/otto-capture`, `npm run capture`): notificações
+  de banco lidas no aparelho, compartilhar comprovante (ML Kit no aparelho), QR da NFC-e. Tudo cai em
+  Detectados e só entra no razão com um toque.
+
+### Produção
+- **API**: `railway up --ci --service otto-api` (de `api/`). O `DELETE /v1/account` de 26/10 só subiu
+  agora: o último deploy era de 24/10, então "Excluir minha conta" falhava em produção até aqui.
+- **APK**: `gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+  -POTTO_UPLOAD_STORE_FILE=` — a propriedade vazia força a chave de debug (`fac61745dc09…`), a mesma do
+  APK publicado, para instalar por cima. Sem ela o build usa a chave de upload (`49:B0:1A…`, a da
+  Play) e o Android recusa a atualização.
+- **AAB** para a Play: `gradlew bundleRelease` com a chave de upload, em `builds/OTTO-0.5.0.aab`.
+- **Site e APK**: `public/OTTO.apk` + `vercel deploy --prod`.
+
+### Armadilhas desta fase
+- `expo prebuild` tenta apagar `android/` inteiro. Falhou por o Gradle segurar a pasta e nada se
+  perdeu, mas não rodar de novo sem antes guardar `android/app/debug.keystore` fora do projeto. A
+  intenção de compartilhar foi aplicada à mão no manifesto e está no `app.json` para o próximo prebuild.
+- Gradle no Windows precisa de `JAVA_TOOL_OPTIONS="-Djdk.net.unixdomain.tmpdir=C:/tmp"`.
+- O Metro travou duas vezes e ficou segurando a 8081; matar o processo e subir de novo.
+- Com um emulador aberto, `adb` precisa de `ANDROID_SERIAL=3B15B60048C00000` (o Realme).
+
+---
+
 ## Próximo passo
 **Instalar o APK 0.3.0 e usar com dados reais.** Mesma assinatura, então é atualização. A verificar
 no aparelho: a barra de vidro e a lente, o Otto respondendo e — com um lançamento pequeno — um
@@ -1462,6 +1502,8 @@ node tools/native-check.mjs # compatibilidade de módulos nativos com o Expo Go
 npm run ledger              # 129 checagens + 12 dos formulários: projeção, fita, fatura, gasto, avisos
 npm run assistant           # ferramentas do Otto, validação e o laço com o servidor
 npm run lock                # o trinco em cada rota
+npm run rhythm              # os avisos com ritmo
+npm run capture             # a leitura de notificações, comprovantes e notas
 npx tsc --noEmit            # typecheck
 ```
 
