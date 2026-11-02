@@ -1546,7 +1546,7 @@ o número grande das telas de detalhe fica em branco ~0,5 s (já era assim). Nã
   sublinhado saídas/entradas, RuleTabs, Fixas, cadastro de recorrência) viraram `scaleX`.
 - **O mês muda no lugar.** O bloco do Início era recriado a cada mês (~150 views) e a coleta de lixo
   compactadora do Android 16 caía em cima do quadro novo: 150–220 ms. Agora o número rola do valor antigo
-  para o novo, a curva se refaz, as barras regrediram e crescem, a rosca refaz a varredura (`key={flow}`).
+  para o novo, a curva se refaz, as barras crescem de novo, a rosca refaz a varredura (`key={flow}`).
 
 Medido no Realme, 0.5.2 → fase 2: troca de mês, pior quadro 21–172 → <20–50 ms (p99 20–36); abrir o Lançar
 53–93 → 29–44 ms, voltar 65–82 → 25–27 ms; digitar no teclado do Lançar p99 8–14 ms; chat do Otto abrir
