@@ -241,8 +241,9 @@ export function TabBar({ blurTarget }: { blurTarget?: RefObject<View | null> }) 
 
   const fade = useAnimatedStyle(() => ({ opacity: shown.value * (1 - tucked.value) }));
 
+  // Transform only: a width in here is a layout prop, which sends every frame of the lens through a
+  // full shadow-tree commit instead of straight to the view — measured as two seconds of re-mounts.
   const lens = useAnimatedStyle(() => ({
-    width: slotWidth,
     transform: [
       { translateX: at.value * slotWidth },
       { scaleX: 1 + stretch.value * 0.12 },
@@ -277,7 +278,7 @@ export function TabBar({ blurTarget }: { blurTarget?: RefObject<View | null> }) 
             {/* Positioned over the row rather than parented to a slot — a lens inside an item could
                 never travel to a different one. Hidden until the row has a width to divide. */}
             {slotWidth > 0 ? (
-              <Animated.View style={[styles.lens, lens]} pointerEvents="none">
+              <Animated.View style={[styles.lens, { width: slotWidth }, lens]} pointerEvents="none">
                 <LinearGradient
                   colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.03)']}
                   style={StyleSheet.absoluteFill}

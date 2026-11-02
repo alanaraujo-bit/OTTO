@@ -397,7 +397,12 @@ function RazaoBody() {
            */
           initialNumToRender={14}
           maxToRenderPerBatch={8}
-          windowSize={7}
+          /*
+           * A screen above and a screen below. Every row kept rendered off screen is re-attached and
+           * re-drawn each time the tab comes back; at 7 that was half of the tab change's frame.
+           * Rows are fixed-height with `getItemLayout`, so a fast fling still lands on filled rows.
+           */
+          windowSize={3}
           /*
            * Off, and stated rather than omitted, because Android's VirtualizedList turns it on by
            * default. Clipping and sticky headers are a known bad pair there: the pinned row blanks

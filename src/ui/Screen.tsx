@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { useMemo, type ReactNode } from 'react';
+import { Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -8,7 +8,6 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { color, rim, space } from '@/theme/tokens';
 import { duration, ease, useReducedMotion } from '@/theme/motion';
 import { FocusSignalProvider, useAttention, useFocusValue } from './FocusSignal';
@@ -124,22 +123,15 @@ function TouchReporter({ children }: { children: ReactNode }) {
 /**
  * Lit from the upper rim. Two stops only — a third reads as a gradient effect rather than as light.
  *
- * The SVG is sized from a measured layout instead of percentages: percentage-sized SVG does not
- * resolve reliably under react-native-web, and a light that stops short of the panel edge leaves a
- * visible seam. Opacity is animated on the wrapper rather than on the gradient stops, so the
- * reaction costs nothing per frame.
+ * A native radial gradient, drawn by the GPU as one shaded rect. It used to be a full-bleed SVG, and
+ * react-native-svg paints on the CPU into a bitmap the size of the screen (1440×3136, 18MB) — then
+ * throws it away whenever the screen leaves the window. Every tab change painted it again on the UI
+ * thread: measured as 33ms of a 42ms frame, plus the garbage collection the allocation set off.
+ * Opacity is animated on the view, so the reaction costs nothing per frame.
  */
 function RimLight() {
-  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const focusValue = useFocusValue();
   const reduced = useReducedMotion();
-
-  const onLayout = (e: LayoutChangeEvent) => {
-    const { width, height } = e.nativeEvent.layout;
-    setSize((prev) =>
-      prev && prev.w === width && prev.h === height ? prev : { w: width, h: height },
-    );
-  };
 
   const lean = useDerivedValue(() =>
     withTiming(focusValue ? focusValue.value : 0, {
@@ -160,33 +152,25 @@ function RimLight() {
   return (
     <Animated.View
       testID="otto-rim"
-      style={[StyleSheet.absoluteFill, animated]}
+      style={[StyleSheet.absoluteFill, styles.rim, animated]}
       pointerEvents="none"
-      onLayout={onLayout}
-      /*
-       * During a push two Screens are mounted, each rasterising a full-bleed SVG radial gradient
-       * while the stack slides them. Promoting this to a hardware layer is the textbook case for it:
-       * static content whose only animated property is opacity. The texture is dropped and rebuilt
-       * when `size` changes, so a rotate or a keyboard resize still repaints correctly.
-       */
-      renderToHardwareTextureAndroid
-    >
-      {size ? (
-        <Svg width={size.w} height={size.h}>
-          <Defs>
-            <RadialGradient id="ottoRim" cx="50%" cy="0%" r="88%">
-              <Stop offset="0" stopColor={rim.color} stopOpacity={rim.innerOpacity} />
-              <Stop offset="1" stopColor={rim.color} stopOpacity={rim.outerOpacity} />
-            </RadialGradient>
-          </Defs>
-          <Rect x={0} y={0} width={size.w} height={size.h} fill="url(#ottoRim)" />
-        </Svg>
-      ) : null}
-    </Animated.View>
+    />
   );
 }
+
+/** `rim.color` with an alpha, as #RRGGBBAA. */
+const rimAt = (opacity: number) =>
+  rim.color + Math.round(opacity * 255).toString(16).padStart(2, '0');
+
+const RIM_GRADIENT = `radial-gradient(ellipse 88% 88% at 50% 0%, ${rimAt(rim.innerOpacity)} 0%, ${rimAt(rim.outerOpacity)} 100%)`;
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: color.bg, overflow: 'hidden' },
   content: { flex: 1 },
+  // `r="88%"` of the old SVG, which in bounding-box units is an ellipse: 88% of each side.
+  // Native reads the prop under its experimental name; the web takes the CSS one.
+  rim: Platform.select({
+    web: { backgroundImage: RIM_GRADIENT } as object,
+    default: { experimental_backgroundImage: RIM_GRADIENT },
+  }),
 });

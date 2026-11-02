@@ -63,5 +63,10 @@
     "puppeteer-core": "^25.9.0",
     "qrcode": "^1.5.4",
     "typescript": "~6.0.3"
+  },
+  "reanimated": {
+    "staticFeatureFlags": {
+      "ANDROID_SYNCHRONOUSLY_UPDATE_UI_PROPS": true
+    }
   }
 }

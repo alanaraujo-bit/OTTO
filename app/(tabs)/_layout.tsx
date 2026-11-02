@@ -12,9 +12,13 @@ const KEEP = ['/razao', '/recorrencias', '/analise', '/ajustes'] as const;
  * Tabs used to be stack screens replaced on every tap, so every change of tab tore down the screen
  * being left and built the next one from nothing — hundreds of views, charts and gestures — and it
  * was measured on the device as the slowest thing in the app. Here each tab is mounted the first
- * time it is needed and then stays; changing tab only shows a screen that already exists. A hidden
- * tab is frozen, so the ledger changing while it is out of sight costs it nothing until it is looked
- * at again.
+ * time it is needed and then stays; changing tab only shows a screen that already exists.
+ *
+ * A hidden tab is not frozen. Freezing hides it inside a Suspense boundary, and React then runs every
+ * animated view's unmount on the way out and its mount on the way back — all of a tab's animations
+ * detached and re-attached on each change: ~75ms of JS and ~390 native prop updates, measured. A
+ * hidden tab that stays live only re-renders when the ledger changes, which is rare and happens
+ * while the screen that changed it is still on top.
  *
  * The change itself is instant, like a native tab bar's; the lens travelling in the glass bar is the
  * movement. Three alternatives were measured on the device and lost: a native shift of the scene
@@ -53,7 +57,7 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         animation: 'none',
-        freezeOnBlur: true,
+        freezeOnBlur: false,
         lazy: true,
         sceneStyle: { backgroundColor: color.bg },
       }}

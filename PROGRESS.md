@@ -1508,6 +1508,26 @@ Já testado e descartado: manter abas anexadas (`display: none` custa igual) e e
 tela (as cinco regravam, 150 ms). A linha tracejada SVG de cada dia do razão virou borda tracejada.
 **Pendente:** a estratégia para tirar esse último quadro — ver a sessão de performance.
 
+### Troca de aba sem quadro acima de 32 ms (medido com perfetto)
+`perfetto` com `atrace_categories: view` dá o custo de desenho por classe de view, e foi o que achou as causas:
+- **O brilho de borda era um SVG do tamanho da tela.** O react-native-svg pinta na CPU num bitmap 1440×3136
+  (18 MB) e o joga fora quando a tela sai da janela: 33 ms por troca de aba e por tela empilhada, mais uma coleta
+  de lixo. Agora é `experimental_backgroundImage: radial-gradient(...)`, desenhado pela GPU — pixels iguais aos da
+  0.5.2. No RN 0.86 a prop nativa é a `experimental_`; `backgroundImage` passa no tsc e não desenha nada.
+- **Reanimated no Android fazia commit do shadow tree a cada quadro animado.** Ligado
+  `ANDROID_SYNCHRONOUSLY_UPDATE_UI_PROPS` (`package.json` → `reanimated.staticFeatureFlags`, exige rebuild nativo), e a
+  lente da barra deixou de animar `width` (prop de layout, que força o caminho lento). A lente agora anda enquanto o
+  JS monta a aba. Cuidado da flag: `Pressable` dentro de view que se move pode perder o toque durante a animação.
+- **`freezeOnBlur` desligado nas abas.** O freeze esconde a aba num Suspense, e o React roda o unmount/mount de todo
+  `Animated.*` dela a cada troca: ~75 ms de JS e ~390 views com props reenviadas. Abas escondidas agora re-renderizam
+  quando o razão muda (raro, e com o Lançar ainda por cima) — não medido.
+- **Razão `windowSize` 7 → 3.** Linhas fora da tela eram reanexadas e redesenhadas na volta da aba.
+
+Resultado no Realme (Início ↔ Razão): pior quadro 75–110 ms → **21–30 ms**; quadros lentos 25–50 → 1–2; janky
+30–40% → ~2%. Tela de detalhe: abrir 55–62 → 25 ms, voltar 77–82 → 31–34 ms. Fling no razão: janky 1,3%.
+Sobra: a rosca e a curva do Início re-rasterizam na CPU na volta (~6 ms); o JS ainda leva ~75 ms até a aba aparecer;
+o número grande das telas de detalhe fica em branco ~0,5 s (já era assim). Não medidos: partida a frio, Lançar, chat.
+
 ### Armadilhas desta fase
 - `expo prebuild` tenta apagar `android/` inteiro. Falhou por o Gradle segurar a pasta e nada se
   perdeu, mas não rodar de novo sem antes guardar `android/app/debug.keystore` fora do projeto. A
