@@ -151,7 +151,7 @@ function Body() {
     <>
       <BackBar />
       <KeyboardAwareScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <Reveal index={0} {...ENTER}>
+        <Reveal glide index={0} {...ENTER}>
           <Txt variant="heading" f="sansSemibold">
             Categorias
           </Txt>
@@ -165,7 +165,7 @@ function Body() {
         </Reveal>
 
         {!ready && !error ? (
-          <Reveal index={1} {...ENTER}>
+          <Reveal glide index={1} {...ENTER}>
             <Txt variant="body" t="faint" style={styles.notice}>
               lendo seu razão
             </Txt>
@@ -173,7 +173,7 @@ function Body() {
         ) : null}
 
         {error ? (
-          <Reveal index={1} {...ENTER}>
+          <Reveal glide index={1} {...ENTER}>
             <Txt variant="body" t="negative" style={styles.notice}>
               {error}
             </Txt>
@@ -181,7 +181,7 @@ function Body() {
         ) : null}
 
         {ready && !error ? (
-          <Reveal index={1} {...ENTER}>
+          <Reveal glide index={1} {...ENTER}>
             {creating ? (
               <Editor
                 key="nova"
@@ -213,7 +213,7 @@ function Body() {
 
         {rows.map((row, i) => (
           <Animated.View key={row.view.name} layout={listLayout} exiting={rowOut}>
-            <Reveal index={Math.min(i + 2, ENTER.cap)} {...ENTER}>
+            <Reveal glide index={Math.min(i + 2, ENTER.cap)} {...ENTER}>
               {open === row.view.name ? (
                 <Editor
                   initial={row.view}

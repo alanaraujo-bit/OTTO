@@ -68,7 +68,8 @@ export default function RootLayout() {
           : typeof data?.date === 'string'
             ? { date: data.date }
             : {};
-      router.push({ pathname: route as never, params });
+      // navigate, not push: a tab the message points at already exists, and must not be stacked twice.
+      router.navigate({ pathname: route as never, params });
     });
     return () => response.remove();
   }, []);
@@ -152,25 +153,11 @@ export default function RootLayout() {
               >
                 <Stack.Screen name="index" options={{ animation: 'none' }} />
                 {/*
-                  The tabs carry no native animation at all, and that is the point.
-
-                  A tab change used to be a native fade *and* a `Reveal` fade — two curves driving the
-                  same pixel's opacity over the same moment, which this project has already learned reads
-                  as a stutter rather than as emphasis. Worse, the native fade is short and unstretchable
-                  on Android, so it set the tempo of the whole thing: 200ms of dissolve with a 12dp rise
-                  behind it, which is precisely what "seco" describes.
-
-                  With it gone, the bar is the element that stays — it appears at once, in the same place,
-                  because it is the same bar — and the content is the element that moves, travelling in
-                  from the side the owner came from over the better part of a second. One curve per
-                  pixel, and the transition belongs to the content, where Fase 1.8 established it has to
-                  live on Android.
-
-                  They still replace rather than push, so two tabs can never stack on each other.
+                  The five tabs are one stack screen: a tab navigator that builds each tab once and
+                  keeps it (see `(tabs)/_layout.tsx`). Arriving at it from the door has no animation,
+                  like any tab change used to; everything pushed over it slides as before.
                 */}
-                <Stack.Screen name="home" options={{ animation: 'none' }} />
-                <Stack.Screen name="razao" options={{ animation: 'none' }} />
-                <Stack.Screen name="analise" options={{ animation: 'none' }} />
+                <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
                 {/* Not a tab. Pushed from ajustes, so it slides laterally like any sibling in a flow. */}
                 <Stack.Screen name="contas" />
                 <Stack.Screen name="calendario" />
@@ -179,14 +166,11 @@ export default function RootLayout() {
                 <Stack.Screen name="capturas" />
                 <Stack.Screen name="automatico" />
                 <Stack.Screen name="nota" options={{ animation: 'slide_from_bottom' }} />
-                {/* A tab since recorrências got a place of their own: no native animation, like the others. */}
-                <Stack.Screen name="recorrencias" options={{ animation: 'none' }} />
                 <Stack.Screen name="tetos" />
                 <Stack.Screen name="categorias" />
                 <Stack.Screen name="recorrencia" />
                 <Stack.Screen name="otto" />
                 <Stack.Screen name="divida/[token]" options={{ animation: 'fade' }} />
-                <Stack.Screen name="ajustes" options={{ animation: 'none' }} />
                 {/* The door. It replaces the entry route rather than sitting on top of it, so there is
                     no screen behind it to reach by dismissing. */}
                 <Stack.Screen name="desbloquear" options={{ animation: 'fade', gestureEnabled: false }} />

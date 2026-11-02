@@ -177,7 +177,7 @@ function ContasBody() {
         keyboardShouldPersistTaps="handled"
       >
         {error ? (
-          <Reveal index={0} {...ENTER}>
+          <Reveal glide index={0} {...ENTER}>
             <Txt variant="heading" f="sansSemibold" style={styles.head}>
               Não foi possível ler seus dados.
             </Txt>
@@ -189,7 +189,7 @@ function ContasBody() {
 
         {view ? (
           <>
-            <Reveal index={0} {...ENTER}>
+            <Reveal glide index={0} {...ENTER}>
               <View style={styles.hero}>
                 <Amount
                   cents={view.total}
@@ -202,7 +202,7 @@ function ContasBody() {
               </View>
             </Reveal>
 
-            <Reveal index={1} {...ENTER} rise={0}>
+            <Reveal glide index={1} {...ENTER} rise={0}>
               <Section label="contas" />
               {view.holding.map((h) => (
                 <Animated.View key={h.account.id} layout={listLayout} exiting={rowOut}>
@@ -249,7 +249,7 @@ function ContasBody() {
               The divide. The one rule on this screen drawn in ink, because it is the claim the whole
               screen exists to make and every other rule here is a group boundary.
             */}
-            <Reveal index={2} {...ENTER} rise={0}>
+            <Reveal glide index={2} {...ENTER} rise={0}>
               <View style={styles.divide}>
                 <View style={styles.divideRule} />
                 <Txt variant="micro" t="faint" style={styles.divideNote}>
@@ -267,7 +267,7 @@ function ContasBody() {
 
             {view.cards.map((c, i) => (
               <Animated.View key={c.account.id} layout={listLayout} exiting={rowOut}>
-                <Reveal index={3 + i} {...ENTER} rise={0}>
+                <Reveal glide index={3 + i} {...ENTER} rise={0}>
                   <Card
                     account={c.account}
                     cycle={c.cycle}
@@ -297,7 +297,7 @@ function ContasBody() {
               exactly one account, and there is no other way to add a second one, or a card, or a
               poupança — so this row is not an extra, it is load-bearing.
             */}
-            <Reveal index={4 + view.cards.length} {...ENTER} rise={0}>
+            <Reveal glide index={4 + view.cards.length} {...ENTER} rise={0}>
               {creatingNew ? (
                 <Animated.View entering={rowIn} exiting={rowOut} style={styles.newBlock}>
                   <Section label="nova conta" />

@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { useNav, tabShift } from '@/lib/nav';
 import { useFocusSignal } from './FocusSignal';
 
@@ -21,17 +22,28 @@ import { useFocusSignal } from './FocusSignal';
  *     screens; a tab change is the same statement — the app showing what it is attending to — so it
  *     reuses the same channel rather than inventing a second one.
  *
+ * Since the tabs are kept (`(tabs)/_layout.tsx`), this plays on a tab's first visit; on the visits
+ * after it the navigator's native shift carries the movement, and only the mark's glance repeats.
+ *
  * A cold start gets no travel and no glance. There was no movement, and inventing one would make
  * opening the app read as navigating inside it.
  */
 export function useTabEntrance() {
-  const direction = useNav((s) => s.direction);
+  /*
+   * Read once, not subscribed to. Every tab is kept mounted now, and a subscription meant that each
+   * tab change re-rendered every tab's whole tree — measured as a 150ms frame the moment a kept tab
+   * was shown. The entrance only needs the direction of its first arrival; the glance reads the
+   * current one each time the tab comes into focus, without rendering anything.
+   */
+  const [direction] = useState(() => useNav.getState().direction);
   const { look } = useFocusSignal();
 
-  useEffect(() => {
-    if (direction !== 0) look(direction);
-    // Fires once per arrival. `direction` only changes when a tab change happens.
-  }, [direction, look]);
+  useFocusEffect(
+    useCallback(() => {
+      const d = useNav.getState().direction;
+      if (d !== 0) look(d);
+    }, [look]),
+  );
 
   return useMemo(() => {
     const shift = tabShift(direction);

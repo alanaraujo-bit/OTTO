@@ -49,8 +49,9 @@ export const useNav = create<NavState>((set, get) => ({
     if (to === current) return;
     set({ from: current, current: to, direction: Math.sign(TABS.indexOf(to) - TABS.indexOf(current)) });
     // A tab can be arrived at already pointed somewhere — the home screen sends the ledger a
-    // month to land on. Still a replace: a tab is a destination, not a page over another.
-    router.replace(params ? { pathname: ROUTE[to], params } : ROUTE[to]);
+    // month to land on. `navigate` shows the tab that already exists (and hands it the params)
+    // instead of building it again; tabs live in one navigator, so they never stack.
+    router.navigate(params ? { pathname: ROUTE[to], params } : ROUTE[to]);
   },
 }));
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   FlatList,
   StyleSheet,
@@ -108,7 +108,8 @@ function RazaoBody() {
    * both: `focus` cuts the tape, `at` says where to open it. Landing on today in a cut tape would
    * answer the wrong month — the owner may well have been reading November.
    *
-   * Read on mount and not after, because that is the only moment `initialScrollIndex` is consulted.
+   * Read on mount through `initialScrollIndex`, and after that by scrolling: the tab stays built, so a
+   * later "open the razão here" arrives as a param change on a screen that already exists.
    */
   const { at, focus } = useLocalSearchParams<{ at?: string; focus?: string }>();
   const land = useMemo(() => {
@@ -266,7 +267,7 @@ function RazaoBody() {
       index: Math.min(p.landRow, p.rows.length - 1),
       animated: false,
     });
-  }, [cut]);
+  }, [cut, land]);
 
   const horizon = useMemo(
     () => format(endOfMonth(addMonths(parseDay(today), 6)), "MMMM 'de' yyyy", { locale: ptBR }),
@@ -390,8 +391,14 @@ function RazaoBody() {
             // an approximate offset beats landing at the beginning of time.
             list.current?.scrollToOffset({ offset: plan.offsets[index] ?? 0, animated: false });
           }}
-          initialNumToRender={24}
-          windowSize={9}
+          /*
+           * A screenful, not two. Every row is a swipe gesture and an animated strip, and mounting 24 of
+           * them in the tab change was the heaviest frame in the app; the rest arrive in small batches
+           * right after, well before a thumb can scroll to them.
+           */
+          initialNumToRender={14}
+          maxToRenderPerBatch={8}
+          windowSize={7}
           /*
            * Off, and stated rather than omitted, because Android's VirtualizedList turns it on by
            * default. Clipping and sticky headers are a known bad pair there: the pinned row blanks
@@ -600,16 +607,14 @@ function ItemRow({
    * leaves and its neighbours close over the gap — rather than the row blinking out on the reload.
    * If the delete fails the row opens back up, because it is still there.
    */
-  const gone = useSharedValue(0);
-  const folding = useAnimatedStyle(() => ({
-    height: height * (1 - gone.value),
-    opacity: 1 - gone.value,
-  }));
+  // Only the row being deleted becomes an animated view; a tape of rows each carrying one was
+  // measured as the razão stuttering on arrival.
+  const [leaving, setLeaving] = useState(false);
   const remove = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    gone.value = withTiming(1, { duration: duration.state, easing: ease.out });
+    setLeaving(true);
     setTimeout(async () => {
-      if (!(await onDelete(item.key))) gone.value = withTiming(0, { duration: duration.state });
+      if (!(await onDelete(item.key))) setLeaving(false);
     }, duration.state);
   };
 
@@ -709,38 +714,47 @@ function ItemRow({
     );
   }
 
-  return (
-    <Animated.View style={[styles.fold, folding]}>
-      <SwipeRow
-        height={height}
-        label="Editar lançamento"
-        actions={[
-          {
-            label: 'editar',
-            tone: 'muted',
-            onPress: () => router.push({ pathname: '/lancar', params: { id: item.key } }),
+  const row = (
+    <SwipeRow
+      height={height}
+      label="Editar lançamento"
+      actions={[
+        {
+          label: 'editar',
+          tone: 'muted',
+          onPress: () => router.push({ pathname: '/lancar', params: { id: item.key } }),
+        },
+        {
+          label: armed ? 'confirmar' : 'excluir',
+          tone: 'negative',
+          warn: armed,
+          keepOpen: !armed,
+          onPress: () => {
+            if (!armed) {
+              setArmed(true);
+              return;
+            }
+            setArmed(false);
+            remove();
           },
-          {
-            label: armed ? 'confirmar' : 'excluir',
-            tone: 'negative',
-            warn: armed,
-            keepOpen: !armed,
-            onPress: () => {
-              if (!armed) {
-                setArmed(true);
-                return;
-              }
-              setArmed(false);
-              remove();
-            },
-          },
-        ]}
-        onPress={() => router.push({ pathname: '/lancar', params: { id: item.key } })}
-      >
-        {body}
-      </SwipeRow>
-    </Animated.View>
+        },
+      ]}
+      onPress={() => router.push({ pathname: '/lancar', params: { id: item.key } })}
+    >
+      {body}
+    </SwipeRow>
   );
+  return leaving ? <Fold height={height}>{row}</Fold> : row;
+}
+
+/** A row folding shut: its height and its ink go to zero together, and its neighbours close over it. */
+function Fold({ height, children }: { height: number; children: ReactNode }) {
+  const gone = useSharedValue(0);
+  useEffect(() => {
+    gone.value = withTiming(1, { duration: duration.state, easing: ease.out });
+  }, [gone]);
+  const folding = useAnimatedStyle(() => ({ height: height * (1 - gone.value), opacity: 1 - gone.value }));
+  return <Animated.View style={[styles.fold, folding]}>{children}</Animated.View>;
 }
 
 const styles = StyleSheet.create({

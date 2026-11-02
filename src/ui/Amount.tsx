@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -96,6 +96,7 @@ export function Amount({
 
 type Ink = NonNullable<Parameters<typeof Amount>[0]['tone']>;
 const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+const COLUMN = DIGITS.join('\n');
 
 /**
  * The figure as a mechanical counter: every digit is a drum that rolls to its value.
@@ -104,6 +105,10 @@ const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
  * changes the digits that changed travel and the ones that did not stay still — the eye sees *how
  * much* moved before it reads the new number. A hero figure also counts up from zero when it first
  * appears, which is the screen arriving at its reading.
+ *
+ * **At rest it is plain text.** The drums exist only while a figure is moving and are taken away once
+ * it settles. Mounting a drum for every digit of every figure on every tab change was measured on
+ * the device as the Home stuttering on arrival; a resting number costs what any text costs.
  *
  * Columns are keyed from the right, so the units stay the units when the figure gains a digit
  * (905 → 1.905 rolls the hundreds and adds a thousands drum, rather than shuffling every column).
@@ -120,20 +125,53 @@ function Odometer({
   ink: Ink;
   fromZero: boolean;
 }) {
+  const reduced = useReducedMotion();
+  /** What the drums roll from: zero for a hero arriving, the previous reading for a change. */
+  const [roll, setRoll] = useState<{ from: string; key: number } | null>(() =>
+    fromZero && !reduced ? { from: '', key: 0 } : null,
+  );
+  const shown = useRef(text);
+
+  useEffect(() => {
+    if (shown.current === text) return;
+    const from = shown.current;
+    shown.current = text;
+    if (!reduced) setRoll((r) => ({ from, key: (r?.key ?? 0) + 1 }));
+  }, [text, reduced]);
+
+  // Back to plain text once the longest roll is over, watchdog margin included.
+  useEffect(() => {
+    if (!roll) return;
+    const span = (roll.from === '' ? duration.focal + 280 : duration.focal) + text.length * 45 + 450;
+    const t = setTimeout(() => setRoll(null), span);
+    return () => clearTimeout(t);
+  }, [roll, text.length]);
+
+  if (!roll) {
+    return (
+      <Txt variant={variant} f="monoSemibold" t={ink} tabular>
+        {text}
+      </Txt>
+    );
+  }
+
   const chars = text.split('');
+  const before = roll.from.split('');
   return (
-    <View style={styles.odometer}>
+    <View style={styles.odometer} key={roll.key}>
       {chars.map((c, i) => {
         const fromRight = chars.length - 1 - i;
+        const was = before[before.length - 1 - fromRight];
         return /\d/.test(c) ? (
           <Drum
             key={`d${fromRight}`}
+            from={was && /\d/.test(was) ? Number(was) : 0}
             value={Number(c)}
             variant={variant}
             ink={ink}
-            fromZero={fromZero}
+            slow={roll.from === ''}
             // Left to right, so the reading arrives the way it is read.
-            delay={fromZero ? i * 45 : 0}
+            delay={roll.from === '' ? i * 45 : 0}
           />
         ) : (
           <Txt key={`s${fromRight}${c}`} variant={variant} f="monoSemibold" t={ink} tabular>
@@ -146,39 +184,28 @@ function Odometer({
 }
 
 function Drum({
+  from,
   value,
   variant,
   ink,
-  fromZero,
+  slow,
   delay,
 }: {
+  from: number;
   value: number;
   variant: 'display' | 'heading' | 'body';
   ink: Ink;
-  fromZero: boolean;
+  slow: boolean;
   delay: number;
 }) {
-  const reduced = useReducedMotion();
   const { fontScale } = useWindowDimensions();
   /** One row of the drum, measured from the column so nine rows never drift off by a rounding. */
   const row = useSharedValue(type[variant].leading * fontScale);
-  const at = useSharedValue(fromZero && !reduced ? 0 : value);
+  const at = useSharedValue(from);
 
   useEffect(() => {
-    if (reduced) {
-      at.value = value;
-      return;
-    }
-    const span = fromZero ? duration.focal + 280 : duration.focal;
-    at.value = withDelay(delay, withTiming(value, { duration: span, easing: ease.out }));
-    // A drum stuck between digits would be showing a wrong number, which on a money screen is worse
-    // than no motion at all. Once the roll should be over, the value is set outright.
-    const settle = setTimeout(() => {
-      at.value = value;
-    }, delay + span + 400);
-    return () => clearTimeout(settle);
-    // `fromZero` and `delay` only shape the first roll; a later change of value rolls from where it is.
-  }, [value, reduced]);
+    at.value = withDelay(delay, withTiming(value, { duration: slow ? duration.focal + 280 : duration.focal, easing: ease.out }));
+  }, [at, value, delay, slow]);
 
   const clip = useAnimatedStyle(() => ({ height: row.value }));
   const drum = useAnimatedStyle(() => ({ transform: [{ translateY: -at.value * row.value }] }));
@@ -191,11 +218,10 @@ function Drum({
           row.value = e.nativeEvent.layout.height / DIGITS.length;
         }}
       >
-        {DIGITS.map((d) => (
-          <Txt key={d} variant={variant} f="monoSemibold" t={ink} tabular>
-            {d}
-          </Txt>
-        ))}
+        {/* One text node holding the ten rows, not ten nodes. */}
+        <Txt variant={variant} f="monoSemibold" t={ink} tabular>
+          {COLUMN}
+        </Txt>
       </Animated.View>
     </Animated.View>
   );

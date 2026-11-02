@@ -177,7 +177,8 @@ export default function SharedDebt() {
           : 'Dívida adicionada às suas recorrências.',
         'info',
       );
-      router.replace('/recorrencias');
+      // To the fixas tab that already exists under this screen, not a second copy of the tabs.
+      router.navigate('/recorrencias');
     } catch (reason) {
       snack(reason instanceof Error ? reason.message : 'Não foi possível adicionar ao seu OTTO.', 'error');
       setAccepting(false);

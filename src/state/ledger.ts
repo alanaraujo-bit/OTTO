@@ -6,7 +6,47 @@ import type { Cap } from '@/domain/cap';
 import type { Category } from '@/domain/category';
 import { deferralMap } from '@/domain/deferral';
 import { isStatementSeries } from '@/domain/settlement';
+import { InteractionManager } from 'react-native';
 import { planFor, reschedule } from '@/lib/notify';
+import { dayKey } from '@/domain/projection';
+
+/*
+ * Rescheduling is done only when it would say something different, and only once the screen has
+ * finished arriving.
+ *
+ * Every tab reads the ledger on mount, and with alerts on, each read used to recompute three weeks of
+ * projection and re-place twenty notifications on the JS thread — in the middle of the tab change's
+ * animation, which is exactly where the app was measured stuttering. The same figures produce the
+ * same messages, so an unchanged ledger (on the same day) is skipped, and a changed one waits for the
+ * transition to settle.
+ */
+let scheduledFor = '';
+let pendingRun: ReturnType<typeof setTimeout> | null = null;
+/**
+ * The ledger as one string. Exact, so an edited title or category is never mistaken for "nothing
+ * changed"; a few milliseconds for a ledger of hundreds of rows, against a full screen re-render.
+ */
+let lastRead = '';
+const fingerprint = (ledger: unknown) => JSON.stringify(ledger);
+
+function schedule(ledger: Parameters<typeof planFor>[0], read: string) {
+  // The day is part of it: the same ledger says different things tomorrow.
+  const key = `${dayKey(new Date())}|${read}`;
+  if (key === scheduledFor) return;
+  if (pendingRun) clearTimeout(pendingRun);
+  pendingRun = setTimeout(() => {
+    pendingRun = null;
+    InteractionManager.runAfterInteractions(() => {
+      void reschedule(planFor(ledger))
+        .then(() => {
+          scheduledFor = key;
+        })
+        .catch(() => {
+          // A scheduler that will not answer must never take the ledger down with it.
+        });
+    });
+  }, 1200);
+}
 
 interface LedgerState {
   ready: boolean;
@@ -63,6 +103,12 @@ export const useLedger = create<LedgerState>((set, get) => ({
        * payments depend on are never lost by being hidden here.
        */
       const ledger = { ...stored, series: stored.series.filter((s) => !isStatementSeries(s.id)) };
+      // Every tab reads on mount. When nothing changed, keeping the arrays the screens already hold
+      // spares the whole arriving screen a second render in the middle of its entrance.
+      const read = fingerprint(ledger);
+      const was = get();
+      if (was.ready && !was.error && read === lastRead) return;
+      lastRead = read;
       set({ ...ledger, deferralsBySlot: deferralMap(ledger.deferrals), ready: true, error: null });
 
       /*
@@ -75,10 +121,7 @@ export const useLedger = create<LedgerState>((set, get) => ({
        * screen should wait on the notification service to draw a balance. It is also a no-op unless
        * the owner has actually turned alerts on — `reschedule` checks the capability first.
        */
-      void reschedule(planFor(ledger))
-        .catch(() => {
-          // A scheduler that will not answer must never take the ledger down with it.
-        });
+      schedule(ledger, read);
     } catch (e) {
       set({ ready: true, error: e instanceof Error ? e.message : 'Falha ao ler o banco.' });
     }

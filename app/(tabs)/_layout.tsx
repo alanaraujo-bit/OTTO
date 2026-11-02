@@ -1,0 +1,65 @@
+import { useEffect } from 'react';
+import { InteractionManager } from 'react-native';
+import { router, Tabs } from 'expo-router';
+import { color } from '@/theme/tokens';
+
+/** The order the bar shows them in. The first is where a cold start lands. */
+const KEEP = ['/razao', '/recorrencias', '/analise', '/ajustes'] as const;
+
+/**
+ * The five places, each built once and kept.
+ *
+ * Tabs used to be stack screens replaced on every tap, so every change of tab tore down the screen
+ * being left and built the next one from nothing — hundreds of views, charts and gestures — and it
+ * was measured on the device as the slowest thing in the app. Here each tab is mounted the first
+ * time it is needed and then stays; changing tab only shows a screen that already exists. A hidden
+ * tab is frozen, so the ledger changing while it is out of sight costs it nothing until it is looked
+ * at again.
+ *
+ * The change itself is instant, like a native tab bar's. A shift of the whole scene was measured
+ * too, and it cost frames: the glass bar re-blurs everything under it on every frame the page moves.
+ * The lens travelling in the bar is the movement that says where you went.
+ *
+ * The bar itself is not this navigator's: OTTO's glass bar is mounted once at the root, above every
+ * screen, and drives navigation through `useNav`. This navigator draws none.
+ */
+export default function TabsLayout() {
+  // Build the other four while the owner is reading the first, one at a time and only when the app
+  // is idle, so the first visit to each is already instant.
+  useEffect(() => {
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    InteractionManager.runAfterInteractions(() => {
+      KEEP.forEach((href, i) => {
+        timers.push(
+          setTimeout(() => {
+            if (!cancelled) InteractionManager.runAfterInteractions(() => router.prefetch(href));
+          }, 1500 + i * 900),
+        );
+      });
+    });
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+    };
+  }, []);
+
+  return (
+    <Tabs
+      tabBar={() => null}
+      screenOptions={{
+        headerShown: false,
+        animation: 'none',
+        freezeOnBlur: true,
+        lazy: true,
+        sceneStyle: { backgroundColor: color.bg },
+      }}
+    >
+      <Tabs.Screen name="home" />
+      <Tabs.Screen name="razao" />
+      <Tabs.Screen name="recorrencias" />
+      <Tabs.Screen name="analise" />
+      <Tabs.Screen name="ajustes" />
+    </Tabs>
+  );
+}

@@ -4,7 +4,7 @@ Arquivo de retomada. Se a sessão cair, comece por aqui.
 
 ---
 
-## Estado atual: **Fase 11 — app vivo, fixas, avisos com ritmo e lançamento automático. APK 0.5.0 no ar.**
+## Estado atual: **Fase 11 — app vivo, fixas, avisos com ritmo e lançamento automático. APK 0.5.1 no ar.**
 
 Fases 0 a 4 fechadas. A Home foi aprovada por Alan no aparelho em 2026-09-02 e, junto com as telas
 de acesso, é a régua visual do resto do projeto.
@@ -1474,6 +1474,22 @@ Branch `otto-0.4`, um commit por frente:
   Play) e o Android recusa a atualização.
 - **AAB** para a Play: `gradlew bundleRelease` com a chave de upload, em `builds/OTTO-0.5.0.aab`.
 - **Site e APK**: `public/OTTO.apk` + `vercel deploy --prod`.
+
+### 0.5.1 — a troca de abas, medida e consertada
+O 0.5.0 travava ao trocar de aba (`dumpsys gfxinfo`, nove trocas: 99º percentil 85 ms; o razão sozinho
+26 quadros perdidos e picos de 150 ms). Causa de fundo: as abas eram telas de stack substituídas a cada
+toque, então cada troca destruía uma tela e montava outra do zero. Agora são um `Tabs` em
+`app/(tabs)/` — cada aba é montada uma vez, fica congelada fora de vista e é pré-carregada com
+`router.prefetch` quando o app está ocioso; `useNav.go` usa `navigate`. A troca é instantânea (sem
+`shift`: deslizar a cena inteira obriga o vidro da barra a re-borrar tudo a cada quadro). Somado:
+- `useTabEntrance` lê a direção uma vez em vez de assinar o store, que re-renderizava toda aba montada;
+- o odômetro é texto comum em repouso e só monta os tambores enquanto o número rola;
+- `Reveal` só tem animação de layout com `glide` (contas, tetos, categorias);
+- a linha do razão só vira animada ao ser excluída; o razão monta 14 linhas, não 24;
+- o razão relido igual não é regravado no store, e os avisos só são reagendados quando o razão muda,
+  depois da transição.
+Resultado nas rodadas limpas: 1 a 3 quadros perdidos por troca, em qualquer aba. Medir com o celular
+frio e sem o scrcpy espelhando — os dois distorcem (estado térmico 2 multiplicou os números por 10).
 
 ### Armadilhas desta fase
 - `expo prebuild` tenta apagar `android/` inteiro. Falhou por o Gradle segurar a pasta e nada se

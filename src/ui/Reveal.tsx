@@ -29,6 +29,7 @@ export function Reveal({
   ms,
   style,
   exiting,
+  glide = false,
 }: {
   children: ReactNode;
   /** Position in the sequence. Delay is capped so a long screen never feels slow. */
@@ -62,6 +63,13 @@ export function Reveal({
    */
   ms?: number;
   style?: ViewStyle;
+  /**
+   * Glide to a new place when a sibling above opens, closes or leaves. Off by default: a layout
+   * animation on every block of every screen is work on every mount, and a tab change mounts a
+   * whole screen — measured on the device as the tab bar stuttering. Screens whose blocks really do
+   * move (an editor opening inline) turn it on.
+   */
+  glide?: boolean;
   /** How the block leaves, when it leaves while the screen stays — a placeholder giving way. */
   exiting?: ComponentProps<typeof Animated.View>['exiting'];
 }) {
@@ -93,9 +101,8 @@ export function Reveal({
     ],
   }));
 
-  // After the entrance, a block that moves because a sibling changed glides to its new place.
   return (
-    <Animated.View style={[style, animated]} layout={listLayout} exiting={exiting}>
+    <Animated.View style={[style, animated]} layout={glide ? listLayout : undefined} exiting={exiting}>
       {children}
     </Animated.View>
   );
