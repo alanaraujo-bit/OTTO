@@ -2,7 +2,7 @@
   "expo": {
     "name": "OTTO",
     "slug": "otto",
-    "version": "0.5.2",
+    "version": "0.5.3",
     "orientation": "portrait",
     "scheme": [
       "otto",
@@ -15,7 +15,7 @@
     ],
     "android": {
       "package": "com.alanaraujo.otto",
-      "versionCode": 7,
+      "versionCode": 8,
       "intentFilters": [
         {
           "action": "VIEW",

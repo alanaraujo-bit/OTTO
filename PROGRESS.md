@@ -4,7 +4,7 @@ Arquivo de retomada. Se a sessão cair, comece por aqui.
 
 ---
 
-## Estado atual: **Fase 11 — app vivo, fixas, avisos com ritmo e lançamento automático. APK 0.5.2 no ar.**
+## Estado atual: **Fase 11 — app vivo, fixas, avisos com ritmo e lançamento automático. APK 0.5.3 no ar.**
 
 Fases 0 a 4 fechadas. A Home foi aprovada por Alan no aparelho em 2026-09-02 e, junto com as telas
 de acesso, é a régua visual do resto do projeto.
@@ -1559,6 +1559,12 @@ parado; o "+" só o desliza: começa a subir ~55 ms após o toque, pior quadro 2
 "hoje" ao ganhar foco e leva junto uma data não mexida, para um formulário montado antes da meia-noite não lançar
 no dia anterior. Aberturas com parâmetros (editar, quitar, captura, nota) têm `getId` próprio em `app/_layout.tsx`
 e continuam montando um formulário novo.
+
+### 0.5.3 — no ar
+`expo.version` 0.5.3, `versionCode` 8 (também em `android/app/build.gradle`, que o prebuild não está rodando).
+Dois builds como na 0.5.2: `builds/OTTO-0.5.3-site.apk` (`-PottoListener=false`, sem o serviço de notificações)
+publicado em `public/OTTO.apk` + `vercel deploy --prod` — o link entrega 97.692.728 bytes, igual ao arquivo — e
+`builds/OTTO-0.5.3.apk` (completo, instalado no Realme). Ambos assinados com `debug.keystore` (fac61745dc09…).
 
 ### Armadilhas desta fase
 - `expo prebuild` tenta apagar `android/` inteiro. Falhou por o Gradle segurar a pasta e nada se
