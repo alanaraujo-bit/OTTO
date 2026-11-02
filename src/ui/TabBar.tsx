@@ -100,6 +100,15 @@ function tuck(to: 0 | 1) {
   });
 }
 
+/**
+ * Which tab the scene shows, on the UI thread. The bar moves it on the tap, so the tab appears on
+ * the next frame rather than after the navigation has gone through JS; `(tabs)/_layout` keeps it in
+ * line with the navigator for every other way of arriving.
+ */
+export const shownTab = makeMutable(0);
+/** The tabs whose screen has been built — only those can be shown before the navigator catches up. */
+export const builtTabs = new Set<number>();
+
 /** Brings the bar back, and forgets the scroll it was hiding for. */
 export function showTabBar() {
   lastY = 0;
@@ -226,7 +235,9 @@ export function TabBar({ blurTarget }: { blurTarget?: RefObject<View | null> }) 
   // that made them ends, and the next screen's render is one long task — so without the yield the
   // lens would sit still until that render finished, which is the very delay it exists to hide.
   const select = (key: TabKey) => {
-    moveTo(TABS.indexOf(key));
+    const index = TABS.indexOf(key);
+    moveTo(index);
+    if (builtTabs.has(index)) shownTab.value = index;
     requestAnimationFrame(() => go(key));
   };
 

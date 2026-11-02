@@ -133,7 +133,8 @@ function Column({
     return () => clearTimeout(settle);
   }, [reduced, grow, delay, ratio]);
 
-  const fill = useAnimatedStyle(() => ({ width: trackW * ratio * grow.value }));
+  // Scaled from the left, not widened: a width is layout, and animating one commits the page.
+  const fill = useAnimatedStyle(() => ({ transform: [{ scaleX: ratio * grow.value }] }));
 
   const left = total - done;
 
@@ -150,7 +151,7 @@ function Column({
       {/* The track is the same hairline as every rule on this screen; only the filled part carries
           chroma, and only because chroma here means money. */}
       <View style={styles.track} onLayout={onTrack}>
-        <Animated.View style={[styles.fill, { backgroundColor: tint }, fill]} />
+        <Animated.View style={[styles.fill, { width: trackW, backgroundColor: tint }, fill]} />
       </View>
 
       <Txt variant="micro" t="faint" numberOfLines={1}>
@@ -201,5 +202,5 @@ const styles = StyleSheet.create({
     marginBottom: space.sm,
     overflow: 'hidden',
   },
-  fill: { height: 2 },
+  fill: { height: 2, transformOrigin: 'left' },
 });

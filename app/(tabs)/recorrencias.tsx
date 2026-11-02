@@ -210,7 +210,7 @@ function Free({ view }: { view: Commitments }) {
       ? share
       : withDelay(260, withTiming(share, { duration: duration.focal, easing: ease.out }));
   }, [share, reduced, grown]);
-  const fill = useAnimatedStyle(() => ({ width: `${grown.value * 100}%` }));
+  const fill = useAnimatedStyle(() => ({ transform: [{ scaleX: grown.value }] }));
 
   return (
     <View style={styles.hero}>
@@ -448,7 +448,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.hairline,
     overflow: 'hidden',
   },
-  used: { height: 4, borderRadius: 2 },
+  used: { height: 4, borderRadius: 2, width: '100%', transformOrigin: 'left' },
 
   add: { paddingTop: space.xl },
   tabs: { paddingTop: space.xl },

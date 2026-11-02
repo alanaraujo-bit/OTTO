@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { StyleSheet, View, type TextStyle } from 'react-native';
 import Svg, { Circle, G, Line } from 'react-native-svg';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -7,6 +7,7 @@ import Animated, { type SharedValue,
   FadeIn,
   FadeOut,
   useAnimatedProps,
+  useAnimatedStyle,
   useSharedValue,
   withDelay,
   withSpring,
@@ -145,13 +146,15 @@ export function CategoryDonut({
       sweep.value = 1;
       return;
     }
+    sweep.value = 0;
     sweep.value = withDelay(delay, withTiming(1, { duration: duration.focal, easing: ease.out }));
     // The ring is data. It must arrive even if the animation layer never runs.
     const settle = setTimeout(() => {
       sweep.value = 1;
     }, delay + duration.focal + 400);
     return () => clearTimeout(settle);
-  }, [reduced, delay, sweep]);
+    // A new reading — another month under the same face — is swept in again, in place.
+  }, [reduced, delay, sweep, total]);
 
   /**
    * Geometry, resolved once.
@@ -286,31 +289,30 @@ export function CategoryDonut({
             setFocus(arcs[next]?.key ?? null);
           }}
         >
-          <Svg width={SIZE} height={SIZE}>
-            {/* Rotated so the sweep starts at twelve rather than at three. */}
-            <G rotation={-90} origin={`${SIZE / 2}, ${SIZE / 2}`}>
-              {/* The track is the ordinary hairline, the same one every group boundary uses. */}
-              <Circle
-                cx={SIZE / 2}
-                cy={SIZE / 2}
-                r={R}
-                stroke={color.hairline}
-                strokeWidth={STROKE}
-                fill="none"
-                opacity={0.5}
-              />
+          {/* The track is the ordinary hairline, the same one every group boundary uses. */}
+          <View style={styles.track} pointerEvents="none" />
 
-              {arcs.map((a) => (
-                <Arc
-                  key={a.key}
-                  arc={a}
-                  sweep={sweep}
-                  state={lit === null ? 'rest' : lit.key === a.key ? 'lit' : 'dim'}
-                  reduced={reduced}
-                />
-              ))}
-            </G>
-          </Svg>
+          <Sweep progress={sweep}>
+            {(half) => (
+              <Svg
+                width={SIZE / 2}
+                height={SIZE}
+                viewBox={`${half === 'right' ? SIZE / 2 : 0} 0 ${SIZE / 2} ${SIZE}`}
+              >
+                {/* Rotated so the ring starts at twelve rather than at three. */}
+                <G rotation={-90} origin={`${SIZE / 2}, ${SIZE / 2}`}>
+                  {arcs.map((a) => (
+                    <Arc
+                      key={a.key}
+                      arc={a}
+                      state={lit === null ? 'rest' : lit.key === a.key ? 'lit' : 'dim'}
+                      reduced={reduced}
+                    />
+                  ))}
+                </G>
+              </Svg>
+            )}
+          </Sweep>
 
           {/*
             The ring's total, at heading size. It used to be set at display scale, which made it a
@@ -521,12 +523,10 @@ function bandOf(slice: DonutSlice): number {
  */
 function Arc({
   arc,
-  sweep,
   state,
   reduced,
 }: {
   arc: ArcShape;
-  sweep: SharedValue<number>;
   state: 'rest' | 'lit' | 'dim';
   reduced: boolean;
 }) {
@@ -550,7 +550,7 @@ function Arc({
   }, [state, reduced, dim, pop]);
 
   const hueProps = useAnimatedProps(() => {
-    const len = Math.max(0, Math.min(sweep.value, hueEnd) - arc.start) * CIRC;
+    const len = Math.max(0, hueEnd - arc.start) * CIRC;
     return {
       strokeDasharray: [len, CIRC - len],
       strokeDashoffset: -arc.start * CIRC,
@@ -563,7 +563,7 @@ function Arc({
     if (arc.broke == null) {
       return { strokeDasharray: [0, CIRC], strokeDashoffset: 0, strokeWidth: band, opacity: 1 };
     }
-    const len = Math.max(0, Math.min(sweep.value, arc.end) - arc.broke) * CIRC;
+    const len = Math.max(0, arc.end - arc.broke) * CIRC;
     return {
       strokeDasharray: [len, CIRC - len],
       strokeDashoffset: -arc.broke * CIRC,
@@ -616,6 +616,63 @@ function Arc({
         </>
       )}
     </>
+  );
+}
+
+/**
+ * Reveals the ring clockwise from twelve, by rotation alone.
+ *
+ * The arcs are painted once, whole, and the sweep is two half-discs turning over them: each half of
+ * the ring sits in a window that rotates with the sweep while its contents rotate back, so the ring
+ * stands still and only the edge travels. It used to be a dash length animated on every arc, and
+ * react-native-svg repaints its whole 832px bitmap on the CPU for each frame of that — the ring was
+ * the most expensive thing on the home screen, every time a month or a face was shown. Each half
+ * paints only its own half of the ring, so the two cost what one ring did.
+ */
+function Sweep({
+  progress,
+  children,
+}: {
+  progress: SharedValue<number>;
+  children: (half: 'left' | 'right') => ReactNode;
+}) {
+  const H = SIZE / 2;
+  const right = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${360 * Math.min(progress.value, 0.5)}deg` }],
+  }));
+  const rightBack = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${-360 * Math.min(progress.value, 0.5)}deg` }],
+  }));
+  const left = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${360 * Math.max(progress.value - 0.5, 0)}deg` }],
+  }));
+  const leftBack = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${-360 * Math.max(progress.value - 0.5, 0)}deg` }],
+  }));
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {/* Right half: the window is the turning disc's left half, which sweeps 0 → 180°. */}
+      <View style={[styles.half, { left: H }]}>
+        <Animated.View style={[styles.disc, { left: -H }, right]}>
+          <View style={[styles.half, { left: 0 }]}>
+            <Animated.View style={[styles.disc, { left: 0 }, rightBack]}>
+              <View style={[styles.halfArt, { left: H }]}>{children('right')}</View>
+            </Animated.View>
+          </View>
+        </Animated.View>
+      </View>
+      {/* Left half: the window is the turning disc's right half, which sweeps 180 → 360°. */}
+      <View style={[styles.half, { left: 0 }]}>
+        <Animated.View style={[styles.disc, { left: 0 }, left]}>
+          <View style={[styles.half, { left: H }]}>
+            <Animated.View style={[styles.disc, { left: -H }, leftBack]}>
+              <View style={[styles.halfArt, { left: 0 }]}>{children('left')}</View>
+            </Animated.View>
+          </View>
+        </Animated.View>
+      </View>
+    </View>
   );
 }
 
@@ -685,6 +742,20 @@ function LegendRow({
 
 const styles = StyleSheet.create({
   ring: { alignSelf: 'center', width: SIZE, height: SIZE, justifyContent: 'center', alignItems: 'center' },
+  track: {
+    position: 'absolute',
+    left: SIZE / 2 - R - STROKE / 2,
+    top: SIZE / 2 - R - STROKE / 2,
+    width: 2 * R + STROKE,
+    height: 2 * R + STROKE,
+    borderRadius: R + STROKE / 2,
+    borderWidth: STROKE,
+    borderColor: color.hairline,
+    opacity: 0.5,
+  },
+  half: { position: 'absolute', top: 0, width: SIZE / 2, height: SIZE, overflow: 'hidden' },
+  disc: { position: 'absolute', top: 0, width: SIZE, height: SIZE },
+  halfArt: { position: 'absolute', top: 0 },
   center: {
     ...StyleSheet.absoluteFill,
     alignItems: 'center',

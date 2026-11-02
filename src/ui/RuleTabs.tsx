@@ -42,7 +42,8 @@ export function RuleTabs<K extends string>({
   }, [index, reduced, at]);
 
   const slot = width / tabs.length;
-  const rule = useAnimatedStyle(() => ({ width: slot, transform: [{ translateX: at.value * slot }] }));
+  // The width is a plain style; only the transform moves, so the rule never goes through layout.
+  const rule = useAnimatedStyle(() => ({ transform: [{ translateX: at.value * slot }] }));
 
   return (
     <View onLayout={(e) => setWidth(e.nativeEvent.layout.width)} accessibilityRole="tablist">
@@ -71,7 +72,7 @@ export function RuleTabs<K extends string>({
         })}
       </View>
       <View style={styles.track}>
-        {width > 0 ? <Animated.View style={[styles.rule, rule]} /> : null}
+        {width > 0 ? <Animated.View style={[styles.rule, { width: slot }, rule]} /> : null}
       </View>
     </View>
   );

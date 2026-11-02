@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { router } from 'expo-router';
 import Animated, {
-  FadeIn,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -380,11 +379,13 @@ function HomeBody() {
         {view ? (
           <>
             {/*
-              Keyed on the month, so changing it dissolves the readout and re-rules it rather than
-              swapping digits in place. This is the screen's one authored moment: the month is the
-              only thing on it the owner can change, so it is the only thing that gets a transition.
+              Changing the month re-reads this block in place: the figure rolls from the old
+              reading to the new one, the line is ruled out again, the two bars regrow. It used to
+              be keyed on the month and rebuilt — about 150 views destroyed and made again per
+              change, with the garbage collection that set off landing on the very frame that showed
+              the new month (150–220ms, measured).
             */}
-            <Animated.View key={anchor} entering={FadeIn.duration(220)}>
+            <View>
               <GestureDetector gesture={swipe.pan()}>
                 <View>
                   <Reveal index={2} {...ENTER.body}>
@@ -493,7 +494,7 @@ function HomeBody() {
                   </View>
                 </Reveal>
               ) : null}
-            </Animated.View>
+            </View>
 
             {/*
               Below the fold the entrance stops. Content the owner has to scroll to has already been
@@ -734,7 +735,10 @@ function FlowRings({
   const ruleStyle = useAnimatedStyle(() => {
     const p = Math.min(1, Math.max(0, at.value - pull.value / 160));
     const n = names.value;
-    return { left: n[0] + (n[2] - n[0]) * p, width: n[1] + (n[3] - n[1]) * p };
+    // A 1dp rule moved and stretched by transform: animating left and width relaid the page out.
+    return {
+      transform: [{ translateX: n[0] + (n[2] - n[0]) * p }, { scaleX: n[1] + (n[3] - n[1]) * p }],
+    };
   });
 
   const ring = rings[flow];
@@ -787,7 +791,7 @@ function FlowRings({
       <GestureDetector gesture={pan}>
         <Animated.View style={[styles.ringBlock, ringStyle]}>
           <CategoryDonut
-            key={`${flow}:${month}`}
+            key={flow}
             slices={ring.slices}
             total={ring.total}
             direction={flow}
@@ -923,7 +927,15 @@ const styles = StyleSheet.create({
   flowNames: { flexDirection: 'row', gap: space.xl, paddingBottom: 6 },
   // The full 48dp target, pulled back to the 15dp line it sits on so the rule can sit under the word.
   flowHit: { marginVertical: -(HIT - 15) / 2 },
-  flowRule: { position: 'absolute', bottom: 0, height: 1, backgroundColor: color.ink },
+  flowRule: {
+    position: 'absolute',
+    left: 0,
+    bottom: 0,
+    width: 1,
+    height: 1,
+    backgroundColor: color.ink,
+    transformOrigin: 'left',
+  },
   ringBlock: { paddingTop: space.md },
 
   dayList: { paddingTop: space.xs },

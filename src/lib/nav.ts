@@ -6,7 +6,7 @@ import { isStatementSeries } from '@/domain/settlement';
 export const TABS = ['home', 'ledger', 'fixed', 'stats', 'settings'] as const;
 export type TabKey = (typeof TABS)[number];
 
-const ROUTE = {
+export const ROUTE = {
   home: '/home',
   ledger: '/razao',
   fixed: '/recorrencias',

@@ -785,7 +785,7 @@ function Steps({
     const to = (index + 1) / steps.length;
     progress.value = reduced ? to : withTiming(to, { duration: duration.rule, easing: ease.out });
   }, [index, steps.length, reduced, progress]);
-  const filled = useAnimatedStyle(() => ({ width: `${progress.value * 100}%` }));
+  const filled = useAnimatedStyle(() => ({ transform: [{ scaleX: progress.value }] }));
 
   const ok =
     step === 'kind'
@@ -1292,7 +1292,7 @@ const styles = StyleSheet.create({
   // The steps.
   progress: { paddingTop: space.sm },
   progressTrack: { height: 2, borderRadius: 1, backgroundColor: color.hairline, overflow: 'hidden' },
-  progressFill: { height: 2, borderRadius: 1, backgroundColor: color.ink },
+  progressFill: { height: 2, borderRadius: 1, backgroundColor: color.ink, transformOrigin: 'left' },
   // A beat of air under the label, so the page scrolling up never touches it.
   progressLabel: { paddingTop: space.sm, paddingBottom: space.md },
   stepTitle: { paddingTop: space.lg },

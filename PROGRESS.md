@@ -1528,6 +1528,34 @@ Resultado no Realme (Início ↔ Razão): pior quadro 75–110 ms → **21–30 
 Sobra: a rosca e a curva do Início re-rasterizam na CPU na volta (~6 ms); o JS ainda leva ~75 ms até a aba aparecer;
 o número grande das telas de detalhe fica em branco ~0,5 s (já era assim). Não medidos: partida a frio, Lançar, chat.
 
+### Fase 2 — abas instantâneas, nada repintado na CPU durante uma animação
+- **As cinco abas ficam na tela, a escondida só transparente** (`(tabs)/_layout.tsx`, `useTabsWithTriggers` do
+  `expo-router/ui`). Uma view com opacidade 0 é pulada pela GPU e guarda o que desenhou, então trocar de aba é
+  mudar uma opacidade — nada reanexado nem redesenhado. A barra muda essa opacidade na thread de UI no toque
+  (`shownTab`), sem esperar a navegação passar pelo JS. Troca Início↔Razão: **nenhum quadro acima de 20 ms**
+  em 10 trocas, p99 9–16 ms (era 21–30 ms na fase 1, 75–110 ms na 0.5.2).
+- **O odômetro não girava: girava invisível.** Cada tambor media a própria coluna dentro da janela que ele
+  dimensiona; o pai que corta (`overflow: hidden`) limita a altura do filho, e o ciclo encolhia a coluna até
+  1 px. Era o "card de saldo travando": o número sumia ~0,5 s e o novo aparecia de uma vez. Agora a linha
+  é a altura da fonte, sem medir.
+- **SVG parado, movimento por transformação.** O react-native-svg pinta na CPU e repinta tudo a cada
+  atributo animado (e atributo de SVG sempre passa pelo commit). Na troca de mês a rosca era repintada 442
+  vezes e o logotipo 479 (≈2 s a 60 fps). Agora: pupilas, traço e pálpebras do logotipo são views nativas;
+  a linha da curva é revelada por duas translações opostas; a rosca é pintada uma vez, em duas metades, e a
+  varredura é rotação de janelas; o trilho é uma borda. Barras que animavam `width`/`left` (MonthFlow,
+  sublinhado saídas/entradas, RuleTabs, Fixas, cadastro de recorrência) viraram `scaleX`.
+- **O mês muda no lugar.** O bloco do Início era recriado a cada mês (~150 views) e a coleta de lixo
+  compactadora do Android 16 caía em cima do quadro novo: 150–220 ms. Agora o número rola do valor antigo
+  para o novo, a curva se refaz, as barras regrediram e crescem, a rosca refaz a varredura (`key={flow}`).
+
+Medido no Realme, 0.5.2 → fase 2: troca de mês, pior quadro 21–172 → <20–50 ms (p99 20–36); abrir o Lançar
+53–93 → 29–44 ms, voltar 65–82 → 25–27 ms; digitar no teclado do Lançar p99 8–14 ms; chat do Otto abrir
+p99 25 ms; partida a frio ~300 ms até o primeiro quadro, conteúdo em ~1 s (igual).
+**Não testado:** abas escondidas re-renderizando quando o razão muda — o razão vive no servidor e o emulador
+está na conta do Alan, então salvar um lançamento de teste não foi feito.
+**Sobra:** o Lançar leva ~250 ms de JS para montar antes de subir. Pré-montá-lo (`router.prefetch`) o deixaria
+instantâneo, mas ele guarda "hoje" ao montar — pré-montado durante a virada do dia lançaria na data errada.
+
 ### Armadilhas desta fase
 - `expo prebuild` tenta apagar `android/` inteiro. Falhou por o Gradle segurar a pasta e nada se
   perdeu, mas não rodar de novo sem antes guardar `android/app/debug.keystore` fora do projeto. A

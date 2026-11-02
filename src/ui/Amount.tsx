@@ -199,31 +199,32 @@ function Drum({
   delay: number;
 }) {
   const { fontScale } = useWindowDimensions();
-  /** One row of the drum, measured from the column so nine rows never drift off by a rounding. */
-  const row = useSharedValue(type[variant].leading * fontScale);
+  /**
+   * One row of the drum: the line height the column is set at, scaled as the text is.
+   *
+   * It used to be measured from the column, and the column lives inside the window this sizes — a
+   * clipping parent constrains its child's height, so each measure shrank the window and the next
+   * measure with it, until the column was one pixel tall. Every roll was invisible: the figure went
+   * blank and the new one appeared when the drums were taken away.
+   */
+  const row = type[variant].leading * fontScale;
   const at = useSharedValue(from);
 
   useEffect(() => {
     at.value = withDelay(delay, withTiming(value, { duration: slow ? duration.focal + 280 : duration.focal, easing: ease.out }));
   }, [at, value, delay, slow]);
 
-  const clip = useAnimatedStyle(() => ({ height: row.value }));
-  const drum = useAnimatedStyle(() => ({ transform: [{ translateY: -at.value * row.value }] }));
+  const drum = useAnimatedStyle(() => ({ transform: [{ translateY: -at.value * row }] }));
 
   return (
-    <Animated.View style={[styles.window, clip]}>
-      <Animated.View
-        style={drum}
-        onLayout={(e) => {
-          row.value = e.nativeEvent.layout.height / DIGITS.length;
-        }}
-      >
+    <View style={[styles.window, { height: row }]}>
+      <Animated.View style={[{ height: row * DIGITS.length }, drum]}>
         {/* One text node holding the ten rows, not ten nodes. */}
         <Txt variant={variant} f="monoSemibold" t={ink} tabular>
           {COLUMN}
         </Txt>
       </Animated.View>
-    </Animated.View>
+    </View>
   );
 }
 

@@ -79,7 +79,11 @@ export function BalanceCurve({ curve, width }: { curve: MonthCurve; width: numbe
     [attention, reduced],
   );
 
-  const veil = useAnimatedStyle(() => ({ width: width * draw.value }));
+  // A wipe made of two opposite slides: the clip moves right while the line inside it moves back
+  // left by the same amount, so the line stands still and only the edge travels. Transforms only — a
+  // widening clip is a layout change, and animating one re-laid-out the page on every frame.
+  const veil = useAnimatedStyle(() => ({ transform: [{ translateX: -(1 - draw.value) * width }] }));
+  const hold = useAnimatedStyle(() => ({ transform: [{ translateX: (1 - draw.value) * width }] }));
   const endMark = useAnimatedStyle(() => ({
     opacity: Math.max(0, (draw.value - 0.88) / 0.12),
   }));
@@ -88,10 +92,10 @@ export function BalanceCurve({ curve, width }: { curve: MonthCurve; width: numbe
 
   return (
     <View style={{ width, height }}>
-      {/* Clipped by a container that widens, rather than by an SVG dash offset: this is a plain
-          layout reveal on the UI thread, with no animated path geometry to fail on device. */}
-      <Animated.View style={[styles.veil, { height }, veil]}>
-        <View style={{ width, height }}>
+      {/* Clipped by a container that slides, rather than by an SVG dash offset: the SVG is painted
+          once and never again, with no animated path geometry to fail on device. */}
+      <Animated.View style={[styles.veil, { width, height }, veil]}>
+        <Animated.View style={[{ width, height }, hold]}>
           <Svg width={width} height={height}>
             {/* Zero is only drawn when the month actually reaches it. A zero line on a month that
                 never goes near it is chrome pretending to be information. */}
@@ -157,7 +161,7 @@ export function BalanceCurve({ curve, width }: { curve: MonthCurve; width: numbe
               </>
             ) : null}
           </Svg>
-        </View>
+        </Animated.View>
       </Animated.View>
 
       {/* The end of the month, labelled directly. One label, on the point the reader came for. */}

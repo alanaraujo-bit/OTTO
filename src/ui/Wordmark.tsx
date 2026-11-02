@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Platform, StyleSheet } from 'react-native';
-import Svg, { Circle, Ellipse, Line, Path } from 'react-native-svg';
+import Svg, { Circle, Line, Path } from 'react-native-svg';
 import Animated, {
   Easing,
-  useAnimatedProps,
   useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
@@ -35,10 +34,6 @@ const PUPIL_R = 13;
  */
 const GAZE_X_MAX = 9;
 const GAZE_Y_MAX = 15;
-
-const AEllipse = Animated.createAnimatedComponent(Ellipse);
-const ALine = Animated.createAnimatedComponent(Line);
-const APath = Animated.createAnimatedComponent(Path);
 
 /**
  * react-native-svg does not reliably drive SVG geometry attributes from Reanimated on web. The mark
@@ -118,6 +113,8 @@ export function Wordmark({
   mood?: Mood;
 }) {
   const width = (VB_W / VB_H) * height;
+  /** dp per viewBox unit. */
+  const u = height / VB_H;
   const reduced = useReducedMotion();
   const attention = useAttention();
   const watching = alive && CAN_ANIMATE_SVG && attention !== null;
@@ -293,26 +290,29 @@ export function Wordmark({
     return Math.max(0, PUPIL_R * wake.value * open * (1 - reject.value * 0.6));
   });
 
-  const leftPupil = useAnimatedProps(() => ({
-    cx: EYE[0] + gazeX.value,
-    cy: EYE_CY + gazeY.value + reject.value * 3,
-    rx: pupilRx.value,
-    ry: pupilRy.value,
+  /*
+   * Everything that moves is a native view over a still SVG, moved by transform and opacity alone.
+   * react-native-svg paints on the CPU into a bitmap and repaints all of it whenever one attribute
+   * changes, and SVG attributes cannot skip the shadow-tree commit — so pupils drawn in the SVG
+   * repainted the whole mark, and committed the page, on every frame of every glance. A pupil is a
+   * round view scaled to its radii; the rule is a bar scaled from its left end.
+   */
+  const pupil = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: gazeX.value * u },
+      { translateY: (gazeY.value + reject.value * 3) * u },
+      { scaleX: pupilRx.value / PUPIL_R },
+      { scaleY: pupilRy.value / PUPIL_R },
+    ],
   }));
 
-  const rightPupil = useAnimatedProps(() => ({
-    cx: EYE[1] + gazeX.value,
-    cy: EYE_CY + gazeY.value + reject.value * 3,
-    rx: pupilRx.value,
-    ry: pupilRy.value,
+  const lidOpacity = useAnimatedStyle(() => ({
+    opacity: clamp(shut.value, 0, 1) * wake.value,
   }));
 
-  const lidOpacity = useAnimatedProps(() => ({
-    strokeOpacity: clamp(shut.value, 0, 1) * wake.value,
-  }));
-
-  const barProps = useAnimatedProps(() => ({
-    x2: BAR_X1 + (BAR_X2 - BAR_X1) * bar.value,
+  const barWidth = (BAR_X2 - BAR_X1) * u;
+  const barStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: (-(1 - bar.value) * barWidth) / 2 }, { scaleX: bar.value }],
   }));
 
   // The knock lives on the wrapper, not the SVG: a plain RN transform, no geometry involved.
@@ -325,7 +325,7 @@ export function Wordmark({
   const lidPath = done ? lidDone : lidShut;
 
   /**
-   * The resting geometry, as plain static props.
+   * The resting geometry, as plain static styles.
    *
    * Reanimated writes an animated prop to the native node when the value **changes**. Seeding `shut`
    * and `wake` at 1 for `guard` made the arithmetic right and, by doing so, removed the only thing
@@ -333,12 +333,20 @@ export function Wordmark({
    * and the static `strokeOpacity={0}` in the JSX stands — a mark with no eyelids under a caption
    * saying "de olhos fechados".
    *
-   * So the static prop carries the resting value for the current mood, and the animation only ever
+   * So the static style carries the resting value for the current mood, and the animation only ever
    * moves between resting states. That is this project's oldest rule, and the fix for defect 24
    * broke it by making the correct state reachable *only* through an animation that had no reason
    * to run.
    */
   const lidRest = mood === 'guard' ? 1 : 0;
+
+  const pupilBox = {
+    top: (EYE_CY - PUPIL_R) * u,
+    width: PUPIL_R * 2 * u,
+    height: PUPIL_R * 2 * u,
+    borderRadius: PUPIL_R * u,
+    backgroundColor: stroke,
+  };
 
   return (
     <Animated.View style={[styles.shell, shellStyle]}>
@@ -353,38 +361,49 @@ export function Wordmark({
         <Line x1={158} y1={0} x2={158} y2={VB_H} stroke={stroke} strokeWidth={SW} />
         <Line x1={230} y1={0} x2={230} y2={VB_H} stroke={stroke} strokeWidth={SW} />
         <Circle cx={EYE[1]} cy={EYE_CY} r={EYE_R} stroke={stroke} strokeWidth={SW} fill="none" />
-
-        <ALine
-          x1={BAR_X1}
-          y1={SW / 2}
-          x2={BAR_X2}
-          y2={SW / 2}
-          animatedProps={barProps}
-          stroke={stroke}
-          strokeWidth={SW}
-        />
-
-        {watching ? (
-          <>
-            <AEllipse animatedProps={leftPupil} cx={EYE[0]} cy={EYE_CY} rx={0} ry={0} fill={stroke} />
-            <AEllipse animatedProps={rightPupil} cx={EYE[1]} cy={EYE_CY} rx={0} ry={0} fill={stroke} />
-            {EYE.map((cx) => (
-              <APath
-                key={cx}
-                d={lidPath(cx)}
-                animatedProps={lidOpacity}
-                stroke={stroke}
-                strokeWidth={SW}
-                strokeLinecap="round"
-                strokeOpacity={lidRest}
-                fill="none"
-              />
-            ))}
-          </>
-        ) : null}
       </Svg>
+
+      <Animated.View
+        style={[
+          styles.part,
+          { left: BAR_X1 * u, top: 0, width: barWidth, height: SW * u, backgroundColor: stroke },
+          barStyle,
+        ]}
+      />
+
+      {watching ? (
+        <>
+          {EYE.map((cx) => (
+            <Animated.View
+              key={cx}
+              style={[styles.part, pupilBox, { left: (cx - PUPIL_R) * u }, pupil]}
+            />
+          ))}
+          {/* Fully drawn and faded as a layer, so a blink or a closing eye repaints nothing. */}
+          <Animated.View
+            style={[StyleSheet.absoluteFill, { opacity: lidRest }, lidOpacity]}
+            pointerEvents="none"
+          >
+            <Svg width={width} height={height} viewBox={`0 0 ${VB_W} ${VB_H}`}>
+              {EYE.map((cx) => (
+                <Path
+                  key={cx}
+                  d={lidPath(cx)}
+                  stroke={stroke}
+                  strokeWidth={SW}
+                  strokeLinecap="round"
+                  fill="none"
+                />
+              ))}
+            </Svg>
+          </Animated.View>
+        </>
+      ) : null}
     </Animated.View>
   );
 }
 
-const styles = StyleSheet.create({ shell: { alignSelf: 'flex-start' } });
+const styles = StyleSheet.create({
+  shell: { alignSelf: 'flex-start' },
+  part: { position: 'absolute' },
+});
