@@ -17,6 +17,7 @@ import { useSnackbar } from '@/ui/Snackbar';
 import { useLock } from '@/lib/auth/lock';
 import { useSession } from '@/lib/auth/session';
 import { useLedger } from '@/state/ledger';
+import { useCapture } from '@/state/capture';
 
 /**
  * The only screen in this app that talks about the app rather than about the money.
@@ -67,6 +68,7 @@ function AjustesBody() {
 
   const accounts = useLedger((s) => s.accounts);
   const caps = useLedger((s) => s.caps);
+  const capturing = useCapture((s) => s.listening);
   const load = useLedger((s) => s.load);
 
   const [busy, setBusy] = useState(false);
@@ -167,6 +169,11 @@ function AjustesBody() {
         */}
         <Reveal index={2} {...ENTER.body} rise={0}>
           <Section label="seu dinheiro" />
+          <Door
+            title="Lançamento automático"
+            hint={capturing ? 'ligado · bancos, comprovantes e notas fiscais' : 'o OTTO lança por você, a partir do seu banco'}
+            onPress={() => router.push('/automatico')}
+          />
           <Door
             title="Contas e cartões"
             hint={count.accounts}

@@ -65,3 +65,7 @@ marketing/motion/**/*.mov
 marketing/motion/**/*.webm
 
 .playwright-cli/
+
+# Gradle output of local native modules
+modules/*/android/build/
+modules/*/android/.gradle/

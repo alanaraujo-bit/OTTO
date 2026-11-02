@@ -4,7 +4,10 @@
     "slug": "otto",
     "version": "0.4.0",
     "orientation": "portrait",
-    "scheme": ["otto", "com.alanaraujo.otto"],
+    "scheme": [
+      "otto",
+      "com.alanaraujo.otto"
+    ],
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",
     "assetBundlePatterns": [
@@ -27,6 +30,23 @@
           "category": [
             "BROWSABLE",
             "DEFAULT"
+          ]
+        },
+        {
+          "action": "SEND",
+          "category": [
+            "DEFAULT"
+          ],
+          "data": [
+            {
+              "mimeType": "text/plain"
+            },
+            {
+              "mimeType": "image/*"
+            },
+            {
+              "mimeType": "application/pdf"
+            }
           ]
         }
       ],
@@ -73,7 +93,7 @@
         "expo-notifications",
         {
           "color": "#F2F4F7",
-          "defaultChannel": "otto.alerts"
+          "defaultChannel": "otto.routine"
         }
       ],
       "expo-web-browser",
@@ -83,6 +103,14 @@
         {
           "microphonePermission": "Permita que o OTTO use o microfone para você ditar mensagens ao Otto.",
           "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permita que o OTTO use a câmera para ler o QR Code das notas fiscais.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
         }
       ]
     ],

@@ -19,6 +19,7 @@ import { Amount } from '@/ui/Amount';
 import { MonthStepper, useMonthSwipe } from '@/ui/MonthStepper';
 import { MonthFlow } from '@/ui/MonthFlow';
 import { AlertsInvite } from '@/ui/AlertsInvite';
+import { DetectedStrip } from '@/ui/DetectedStrip';
 import { Press } from '@/ui/Press';
 import { Ask } from '@/ui/Icon';
 import { onTabScroll, useTabBarClearance } from '@/ui/TabBar';
@@ -342,6 +343,9 @@ function HomeBody() {
             swipe={swipe}
           />
         </Reveal>
+
+        {/* What OTTO found in the bank's notifications, waiting for a yes. Gone when there is none. */}
+        <DetectedStrip />
 
         {/*
           Before the ledger is read, the instrument shows a blank readout rather than a skeleton: the

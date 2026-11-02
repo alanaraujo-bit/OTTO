@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.ottocapture'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.ottocapture"
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
+
+dependencies {
+  // On-device text recognition, bundled model: a receipt is read without leaving the phone.
+  implementation 'com.google.mlkit:text-recognition:16.0.1'
+  implementation 'androidx.core:core-ktx:1.13.1'
+}

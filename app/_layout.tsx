@@ -23,6 +23,9 @@ import {
 import { BlurTargetView } from 'expo-blur';
 import { SnackbarHost } from '@/ui/Snackbar';
 import { TabBar } from '@/ui/TabBar';
+import { startCapture } from '@/state/capture';
+import { readShare } from '@/lib/share';
+import { OttoCapture } from '../modules/otto-capture';
 import { useSession } from '@/lib/auth/session';
 import { LockGate } from '@/lib/auth/LockGate';
 import { color } from '@/theme/tokens';
@@ -73,6 +76,19 @@ export default function RootLayout() {
   useEffect(() => {
     if (fontsReady && hydrated) void SplashScreen.hideAsync();
   }, [fontsReady, hydrated]);
+
+  // Lançamento automático: the inbox listens from the start, and a receipt shared into OTTO — cold
+  // start or not — is read the moment the app is ready to show it.
+  useEffect(() => {
+    if (!hydrated) return;
+    const stop = startCapture();
+    void readShare();
+    const shared = OttoCapture?.addListener('onShare', () => void readShare());
+    return () => {
+      stop();
+      shared?.remove();
+    };
+  }, [hydrated]);
 
   if (!fontsReady || !hydrated) return null;
 
@@ -160,6 +176,9 @@ export default function RootLayout() {
                 <Stack.Screen name="calendario" />
                 <Stack.Screen name="notificacoes" />
                 <Stack.Screen name="dados" />
+                <Stack.Screen name="capturas" />
+                <Stack.Screen name="automatico" />
+                <Stack.Screen name="nota" options={{ animation: 'slide_from_bottom' }} />
                 {/* A tab since recorrências got a place of their own: no native animation, like the others. */}
                 <Stack.Screen name="recorrencias" options={{ animation: 'none' }} />
                 <Stack.Screen name="tetos" />

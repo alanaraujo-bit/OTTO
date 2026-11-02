@@ -25,6 +25,7 @@ import { duration, ease, useReducedMotion } from '@/theme/motion';
 import { useSnackbar } from '@/ui/Snackbar';
 import { saidPlainly } from '@/lib/errors';
 import { useLedger } from '@/state/ledger';
+import { useCapture } from '@/state/capture';
 import { deleteEntry, insertEntry, settleOccurrence, updateEntry } from '@/db/repo';
 import { addDays, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -57,11 +58,23 @@ const ENTER = { delay: 40, step: 70, cap: 5, rise: 10 } as const;
  */
 export default function Lancar() {
   const snack = useSnackbar();
-  const { id, settlesSeries, settlesDate } = useLocalSearchParams<{
+  const { id, settlesSeries, settlesDate, ...prefill } = useLocalSearchParams<{
     id?: string;
     /** A forecast to settle, named by the screen that sent us here. See `requested` below. */
     settlesSeries?: string;
     settlesDate?: string;
+    /**
+     * A lançamento OTTO found (Detectados → Editar), or a nota fiscal the SEFAZ would not total:
+     * the form opens already written, and saving it takes the capture out of the inbox.
+     */
+    capture?: string;
+    amount?: string;
+    direction?: string;
+    title?: string;
+    category?: string;
+    account?: string;
+    date?: string;
+    time?: string;
   }>();
   const accounts = useLedger((s) => s.accounts);
   const entries = useLedger((s) => s.entries);
@@ -110,6 +123,21 @@ export default function Lancar() {
     setAccountId(existing.accountId);
     setDate(existing.date);
     setTime(existing.time ?? '');
+  }, [existing]);
+
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (existing || prefilled.current) return;
+    if (!prefill.amount && !prefill.title) return;
+    prefilled.current = true;
+    if (prefill.amount) setCents(Number(prefill.amount) || 0);
+    if (prefill.direction === 'in' || prefill.direction === 'out') setDirection(prefill.direction);
+    if (prefill.title) setTitle(prefill.title);
+    if (prefill.category) setCategory(prefill.category);
+    if (prefill.account) setAccountId(prefill.account);
+    if (prefill.date && /^\d{4}-\d{2}-\d{2}$/.test(prefill.date) && prefill.date <= today) setDate(prefill.date);
+    if (prefill.time) setTime(prefill.time);
+    // Read once, on arrival; the params never change while the screen is up.
   }, [existing]);
 
   // A settlement is dated today by definition — see `settleOccurrence`'s own note. Choosing one
@@ -456,6 +484,7 @@ export default function Lancar() {
         });
       }
       await load();
+      if (prefill.capture) useCapture.getState().decide(prefill.capture);
       setSaved(true);
       // The confirmation on the button is allowed to land before the screen changes underneath it.
       setTimeout(() => router.back(), 420);
@@ -491,7 +520,17 @@ export default function Lancar() {
 
   return (
     <Screen>
-      <BackBar />
+      {/* The keypad is where a purchase is recorded, so the cupom's QR is one tap from it. */}
+      <View style={styles.top}>
+        <BackBar />
+        {!existing && !settles ? (
+          <Press onPress={() => router.push('/nota')} style={styles.scan} accessibilityLabel="Ler nota fiscal">
+            <Txt variant="label" t="muted">
+              Ler nota fiscal
+            </Txt>
+          </Press>
+        ) : null}
+      </View>
 
       <KeyboardAwareScrollView
         style={styles.flex}
@@ -1105,6 +1144,8 @@ function Keypad({
 }
 
 const styles = StyleSheet.create({
+  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  scan: { paddingTop: space.md, minHeight: 48, justifyContent: 'center' },
   settleNote: { paddingTop: space.xs },
   // Same geometry `calendario` reads a month in, at the scale a form section gets rather than a
   // whole screen — one grammar for "pick a day" wherever the app asks it.

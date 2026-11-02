@@ -12,6 +12,7 @@
     "assistant": "node --import ./tools/register-ts.mjs tools/assistant-check.mjs",
     "lock": "node --import ./tools/register-ts.mjs tools/lock-check.mjs",
     "rhythm": "node --import ./tools/register-ts.mjs tools/rhythm-check.mjs",
+    "capture": "node --import ./tools/register-ts.mjs tools/capture-check.mjs",
     "google": "node --import ./tools/register-ts.mjs tools/google-check.mjs",
     "ios": "expo run:ios"
   },
@@ -24,6 +25,7 @@
     "expo-audio": "~57.0.5",
     "expo-auth-session": "~57.0.11",
     "expo-blur": "~57.0.2",
+    "expo-camera": "~57.0.6",
     "expo-constants": "~57.0.17",
     "expo-crypto": "~57.0.2",
     "expo-dev-client": "~57.0.18",

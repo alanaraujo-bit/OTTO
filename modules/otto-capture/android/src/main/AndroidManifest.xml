@@ -1,0 +1,18 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!--
+      Reads the notifications of the bank apps the owner allowed, and nothing else: the listener
+      filters by package before it looks at a single word. Enabled only by the owner, in the
+      system's own "Acesso a notificações" screen.
+    -->
+    <service
+      android:name="expo.modules.ottocapture.CaptureListener"
+      android:label="OTTO · lançamento automático"
+      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+    </service>
+  </application>
+</manifest>
