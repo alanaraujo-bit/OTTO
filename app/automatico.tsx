@@ -39,6 +39,7 @@ function Body() {
   const snack = useSnackbar();
   const listening = useCapture((s) => s.listening);
   const supported = useCapture((s) => s.supported);
+  const canListen = useCapture((s) => s.canListen);
   const refresh = useCapture((s) => s.refresh);
   const [announce, setAnnounce] = useState(OttoCapture?.announces() ?? true);
 
@@ -76,6 +77,22 @@ function Body() {
           <Txt variant="body" t="muted" style={styles.block}>
             Este aparelho não permite ler notificações. Comprovantes e notas fiscais continuam funcionando.
           </Txt>
+        ) : !canListen ? (
+          /*
+           * The site APK. Said as what it is, so the owner does not hunt for a switch that is not
+           * there: the phone's own protection blocks it, the Play version has it, and the other two
+           * ways keep working right here.
+           */
+          <View style={styles.block}>
+            <Txt variant="body" t="ink">
+              Chega com o OTTO da Play Store.
+            </Txt>
+            <Txt variant="body" t="muted" style={styles.blockTight}>
+              Para proteger contra golpes, o Android não deixa apps baixados pelo navegador lerem as notificações
+              do banco. Na versão da Play Store isso funciona. Enquanto isso, compartilhe o comprovante com o OTTO
+              ou leia a nota fiscal: os dois já lançam por você.
+            </Txt>
+          </View>
         ) : (
           <>
             <View style={styles.status}>

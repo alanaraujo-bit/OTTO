@@ -10,7 +10,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { forecastRoute } from '@/lib/nav';
 import { addMonths, endOfMonth, format, startOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import Svg, { Line } from 'react-native-svg';
 import { Screen } from '@/ui/Screen';
 import { Reveal } from '@/ui/Reveal';
 import { Wordmark } from '@/ui/Wordmark';
@@ -480,17 +479,13 @@ function DayRule({
           ]}
         />
       ) : (
-        <Svg width={width} height={1}>
-          <Line
-            x1={0}
-            y1={0.5}
-            x2={width}
-            y2={0.5}
-            stroke={color.hairlineStrong}
-            strokeWidth={1}
-            strokeDasharray="3 5"
-          />
-        </Svg>
+        /*
+         * A forecast day's rule is dashed. Drawn as a clipped dashed border, not an SVG: one SVG
+         * canvas per day was the most expensive thing to draw when the razão came back into view.
+         */
+        <View style={styles.dashClip}>
+          <View style={styles.dash} />
+        </View>
       )}
 
       <View style={styles.dayLine}>
@@ -759,6 +754,9 @@ function Fold({ height, children }: { height: number; children: ReactNode }) {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  // One pixel of a dashed box: only its top edge shows, as the forecast rule.
+  dashClip: { height: 1, overflow: 'hidden' },
+  dash: { height: 3, borderWidth: 1, borderStyle: 'dashed', borderColor: color.hairlineStrong },
   fold: { overflow: 'hidden' },
   scroll: { paddingBottom: space.xxl },
 

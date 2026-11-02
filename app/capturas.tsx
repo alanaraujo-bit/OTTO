@@ -48,6 +48,7 @@ function Body() {
   const items = useCapture((s) => s.items);
   const listening = useCapture((s) => s.listening);
   const supported = useCapture((s) => s.supported);
+  const canListen = useCapture((s) => s.canListen);
   const refresh = useCapture((s) => s.refresh);
   const confirm = useCapture((s) => s.confirm);
   const decide = useCapture((s) => s.decide);
@@ -165,8 +166,8 @@ function Body() {
           <View style={styles.empty}>
             <View style={styles.rule} />
             <Txt variant="body" t={listening ? 'muted' : 'ink'}>
-              {!supported
-                ? 'Este aparelho não lê notificações. Ainda dá para compartilhar comprovantes e ler notas fiscais.'
+              {!supported || !canListen
+                ? 'Compartilhe um comprovante com o OTTO ou leia o QR de uma nota fiscal: o lançamento aparece aqui, pronto para confirmar.'
                 : listening
                   ? 'Nada novo por aqui. Quando seu banco avisar de uma compra ou de um Pix, ele aparece neste lugar.'
                   : 'Ligue o lançamento automático e o OTTO passa a ler as notificações do seu banco.'}
@@ -180,7 +181,7 @@ function Body() {
           <Door title="Ler nota fiscal" hint="aponte para o QR do cupom" onPress={() => router.push('/nota')} />
           <Door
             title="Lançamento automático"
-            hint={listening ? 'ligado · bancos, comprovantes e notas' : 'desligado · toque para ligar'}
+            hint={listening ? 'ligado · bancos, comprovantes e notas' : canListen ? 'desligado · toque para ligar' : 'comprovantes e notas fiscais'}
             onPress={() => router.push('/automatico')}
           />
         </View>

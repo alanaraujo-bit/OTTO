@@ -21,6 +21,8 @@ interface Subscription {
 }
 
 interface OttoCaptureNative {
+  /** False in the site APK, built without the listener for Android's fraud protection. */
+  hasListener(): boolean;
   isListenerEnabled(): boolean;
   openListenerSettings(): void;
   openAppDetails(): void;

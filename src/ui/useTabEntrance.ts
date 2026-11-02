@@ -1,7 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { useMemo, useState } from 'react';
 import { useNav, tabShift } from '@/lib/nav';
-import { useFocusSignal } from './FocusSignal';
 
 /**
  * How a tab screen arrives.
@@ -9,7 +7,7 @@ import { useFocusSignal } from './FocusSignal';
  * One place, so the four tabs cannot drift into four different transitions — nine `Reveal` calls
  * with the same five values is exactly how they diverge in silence, and four screens is worse.
  *
- * Three things happen together, and they are three views of one movement:
+ * Two things happen together, and they are two views of one movement:
  *
  *  1. **The content travels from the side the owner came from.** Android's native stack will not
  *     stretch its own animation, so this travel *is* the transition. `ms` runs well past the native
@@ -18,32 +16,25 @@ import { useFocusSignal } from './FocusSignal';
  *  2. **It settles in sequence.** A screen that arrives all at once is a slab; one that rules itself
  *     top to bottom is a page being written. The stagger is wider here than on a form, because there
  *     is no keyboard waiting and nothing to rush to.
- *  3. **The mark looks the way you went.** `look()` already exists for the push between the auth
- *     screens; a tab change is the same statement — the app showing what it is attending to — so it
- *     reuses the same channel rather than inventing a second one.
  *
- * Since the tabs are kept (`(tabs)/_layout.tsx`), this plays on a tab's first visit; on the visits
- * after it the navigator's native shift carries the movement, and only the mark's glance repeats.
+ * Since the tabs are kept (`(tabs)/_layout.tsx`), this plays on a tab's first visit only; after
+ * that a tab change is instant and the lens in the glass bar is the movement.
  *
- * A cold start gets no travel and no glance. There was no movement, and inventing one would make
+ * A cold start gets no travel. There was no movement, and inventing one would make
  * opening the app read as navigating inside it.
  */
 export function useTabEntrance() {
   /*
    * Read once, not subscribed to. Every tab is kept mounted now, and a subscription meant that each
    * tab change re-rendered every tab's whole tree — measured as a 150ms frame the moment a kept tab
-   * was shown. The entrance only needs the direction of its first arrival; the glance reads the
-   * current one each time the tab comes into focus, without rendering anything.
+   * was shown. The entrance only needs the direction of its first arrival.
+   *
+   * The mark no longer glances toward the tab arriving. It was the third view of this movement, and
+   * the costliest: the wordmark is an SVG, and animating it redrew the canvas on every frame for the
+   * better part of a second after each change — measured as fifty frames at 25fps. The lens in the
+   * bar already says where the owner went.
    */
   const [direction] = useState(() => useNav.getState().direction);
-  const { look } = useFocusSignal();
-
-  useFocusEffect(
-    useCallback(() => {
-      const d = useNav.getState().direction;
-      if (d !== 0) look(d);
-    }, [look]),
-  );
 
   return useMemo(() => {
     const shift = tabShift(direction);

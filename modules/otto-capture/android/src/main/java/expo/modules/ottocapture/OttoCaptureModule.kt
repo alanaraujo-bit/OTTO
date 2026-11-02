@@ -41,6 +41,16 @@ class OttoCaptureModule : Module() {
       instance = WeakReference(this@OttoCaptureModule)
     }
 
+    /** False in the site APK, which is built without the listener (see build.gradle). */
+    Function("hasListener") {
+      try {
+        context.packageManager.getServiceInfo(ComponentName(context, CaptureListener::class.java), 0)
+        true
+      } catch (_: Exception) {
+        false
+      }
+    }
+
     Function("isListenerEnabled") {
       NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
     }

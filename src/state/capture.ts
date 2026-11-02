@@ -19,6 +19,12 @@ interface CaptureState {
   items: Detected[];
   /** Whether this phone can listen at all (Android, with the module built in). */
   supported: boolean;
+  /**
+   * Whether this build has the listener. The APK downloaded from the site does not: Android's
+   * fraud protection refuses to install a sideloaded app that reads notifications. The Play build
+   * does. Sharing receipts and reading notas fiscais work in both.
+   */
+  canListen: boolean;
   /** Whether the owner has given OTTO access to notifications. */
   listening: boolean;
   refresh: () => void;
@@ -36,6 +42,7 @@ let extra: Detected[] = [];
 export const useCapture = create<CaptureState>((set, get) => ({
   items: [],
   supported: OttoCapture != null,
+  canListen: OttoCapture?.hasListener?.() ?? false,
   listening: OttoCapture?.isListenerEnabled() ?? false,
 
   refresh: () => {

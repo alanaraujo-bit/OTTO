@@ -1,0 +1,7 @@
+<!--
+  The build for the APK downloaded from the site. No notification listener: Android's fraud
+  protection (Brazil among the regions) refuses to install, from a browser or a file manager, any
+  app that declares one — the shape of the banking trojans it exists to stop. The Play build keeps
+  the listener (src/main); sharing a receipt and reading a nota fiscal work in both.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

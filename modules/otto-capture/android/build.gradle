@@ -6,8 +6,16 @@ plugins {
 group = 'expo.modules.ottocapture'
 version = '0.1.0'
 
+// -PottoListener=false builds the site APK without the notification listener (see src/sideload).
+def withListener = (findProperty('ottoListener') ?: 'true').toString().toBoolean()
+
 android {
   namespace "expo.modules.ottocapture"
+  sourceSets {
+    main {
+      manifest.srcFile withListener ? 'src/main/AndroidManifest.xml' : 'src/sideload/AndroidManifest.xml'
+    }
+  }
   defaultConfig {
     versionCode 1
     versionName '0.1.0'

@@ -4,7 +4,7 @@ Arquivo de retomada. Se a sessão cair, comece por aqui.
 
 ---
 
-## Estado atual: **Fase 11 — app vivo, fixas, avisos com ritmo e lançamento automático. APK 0.5.1 no ar.**
+## Estado atual: **Fase 11 — app vivo, fixas, avisos com ritmo e lançamento automático. APK 0.5.2 no ar.**
 
 Fases 0 a 4 fechadas. A Home foi aprovada por Alan no aparelho em 2026-09-02 e, junto com as telas
 de acesso, é a régua visual do resto do projeto.
@@ -1490,6 +1490,23 @@ toque, então cada troca destruía uma tela e montava outra do zero. Agora são 
   depois da transição.
 Resultado nas rodadas limpas: 1 a 3 quadros perdidos por troca, em qualquer aba. Medir com o celular
 frio e sem o scrcpy espelhando — os dois distorcem (estado térmico 2 multiplicou os números por 10).
+
+### 0.5.2 — duas versões, e o que a troca de aba ainda custa
+**O APK do site não pode ler notificações.** A proteção contra fraude do Google (Brasil incluído)
+bloqueia instalar pelo navegador ou gerenciador de arquivos qualquer app que declare
+`BIND_NOTIFICATION_LISTENER_SERVICE` (`statusCode=-22`, Play Protect). Por isso dois builds:
+- site: `assembleRelease ... -POTTO_UPLOAD_STORE_FILE= -PottoListener=false` → `builds/OTTO-0.5.2-site.apk`,
+  publicado em `public/OTTO.apk`. O manifesto do módulo vem de `src/sideload` (sem o serviço) e a tela
+  de Lançamento automático diz que a leitura chega pela Play Store (`hasListener()`).
+- completo: sem `-PottoListener` → `builds/OTTO-0.5.2.apk` (instalado no Realme por `adb`, que não passa
+  pelo bloqueio) e o AAB da Play.
+
+**Medido quadro a quadro** (`dumpsys gfxinfo <pkg> framestats`): o olhar do logotipo na troca de aba
+redesenhava o SVG por ~0,8 s (≈50 quadros a 25 fps) e foi removido. Sobra **um quadro de 75–110 ms** na
+troca: ~40–55 ms desenhando a tela que volta (o navegador a desanexa), mais o quadro seguinte atrasado.
+Já testado e descartado: manter abas anexadas (`display: none` custa igual) e empurrá-las para fora da
+tela (as cinco regravam, 150 ms). A linha tracejada SVG de cada dia do razão virou borda tracejada.
+**Pendente:** a estratégia para tirar esse último quadro — ver a sessão de performance.
 
 ### Armadilhas desta fase
 - `expo prebuild` tenta apagar `android/` inteiro. Falhou por o Gradle segurar a pasta e nada se

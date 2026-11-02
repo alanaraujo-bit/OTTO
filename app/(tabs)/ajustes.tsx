@@ -69,6 +69,7 @@ function AjustesBody() {
   const accounts = useLedger((s) => s.accounts);
   const caps = useLedger((s) => s.caps);
   const capturing = useCapture((s) => s.listening);
+  const canListen = useCapture((s) => s.canListen);
   const load = useLedger((s) => s.load);
 
   const [busy, setBusy] = useState(false);
@@ -171,7 +172,13 @@ function AjustesBody() {
           <Section label="seu dinheiro" />
           <Door
             title="Lançamento automático"
-            hint={capturing ? 'ligado · bancos, comprovantes e notas fiscais' : 'o OTTO lança por você, a partir do seu banco'}
+            hint={
+              capturing
+                ? 'ligado · bancos, comprovantes e notas fiscais'
+                : canListen
+                  ? 'o OTTO lança por você, a partir do seu banco'
+                  : 'comprovantes e notas fiscais viram lançamento'
+            }
             onPress={() => router.push('/automatico')}
           />
           <Door

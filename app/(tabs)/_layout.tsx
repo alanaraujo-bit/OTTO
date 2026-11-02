@@ -16,9 +16,12 @@ const KEEP = ['/razao', '/recorrencias', '/analise', '/ajustes'] as const;
  * tab is frozen, so the ledger changing while it is out of sight costs it nothing until it is looked
  * at again.
  *
- * The change itself is instant, like a native tab bar's. A shift of the whole scene was measured
- * too, and it cost frames: the glass bar re-blurs everything under it on every frame the page moves.
- * The lens travelling in the bar is the movement that says where you went.
+ * The change itself is instant, like a native tab bar's; the lens travelling in the glass bar is the
+ * movement. Three alternatives were measured on the device and lost: a native shift of the scene
+ * (the glass bar re-blurs everything under it on every frame the page moves), keeping hidden tabs
+ * attached (`display: none` costs the same re-draw as detaching) and translating them off screen
+ * (all five then re-record on each change — 150ms frames). What the frame that shows a tab costs is
+ * now the drawing of that screen alone, which is why its heaviest views are kept cheap to draw.
  *
  * The bar itself is not this navigator's: OTTO's glass bar is mounted once at the root, above every
  * screen, and drives navigation through `useNav`. This navigator draws none.
